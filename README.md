@@ -1,4 +1,4 @@
-# macports-base
+# macport.base
 
 This repository contains the source code for the MacPorts command-line client.
 
