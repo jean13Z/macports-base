@@ -1,8 +1,7 @@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
-# portfetch.tcl
 # $Id$
 #
-# Copyright (c) 2004 - 2012 The MacPorts Project
+# Copyright (c) 2004 - 2014 The MacPorts Project
 # Copyright (c) 2002 - 2003 Apple Inc.
 # All rights reserved.
 #
@@ -48,7 +47,7 @@ namespace eval portfetch {
 }
 
 # define options: distname master_sites
-options master_sites patch_sites extract.suffix distfiles patchfiles use_bzip2 use_lzma use_xz use_zip use_7z use_dmg dist_subdir \
+options master_sites patch_sites extract.suffix distfiles patchfiles use_bzip2 use_lzma use_xz use_zip use_7z use_lzip use_dmg dist_subdir \
     fetch.type fetch.user fetch.password fetch.use_epsv fetch.ignore_sslcert \
     master_sites.mirror_subdir patch_sites.mirror_subdir \
     bzr.url bzr.revision \
@@ -117,7 +116,6 @@ default fetch.ignore_sslcert "no"
 # Use remote timestamps
 default fetch.remote_time "no"
 
-default fallback_mirror_site "macports"
 default global_mirror_site "macports_distfiles"
 default mirror_sites.listfile {"mirror_sites.tcl"}
 default mirror_sites.listpath {"port1.0/fetch"}
@@ -128,6 +126,7 @@ option_proc use_lzma  portfetch::set_extract_type
 option_proc use_xz    portfetch::set_extract_type
 option_proc use_zip   portfetch::set_extract_type
 option_proc use_7z    portfetch::set_extract_type
+option_proc use_lzip  portfetch::set_extract_type
 option_proc use_dmg   portfetch::set_extract_type
 
 option_proc fetch.type portfetch::set_fetch_type
@@ -138,6 +137,9 @@ proc portfetch::set_extract_type {option action args} {
         switch $option {
             use_bzip2 {
                 set extract.suffix .tar.bz2
+                if {![catch {findBinary lbzip2} result]} {
+                    depends_extract-append bin:lbzip2:lbzip2
+                }
             }
             use_lzma {
                 set extract.suffix .tar.lzma
@@ -155,6 +157,10 @@ proc portfetch::set_extract_type {option action args} {
                 set extract.suffix .7z
                 depends_extract-append bin:7za:p7zip
             }
+            use_lzip {
+                set extract.suffix .tar.lz
+                depends_extract-append bin:lzip:lzip
+            }
             use_dmg {
                 set extract.suffix .dmg
             }
@@ -165,7 +171,7 @@ proc portfetch::set_extract_type {option action args} {
 proc portfetch::set_fetch_type {option action args} {
     global os.platform os.major
     if {[string equal ${action} "set"]} {
-        if {$args != "standard"} {
+        if {$args ne "standard"} {
             distfiles
         }
         switch $args {
@@ -176,14 +182,14 @@ proc portfetch::set_fetch_type {option action args} {
                 depends_fetch-append bin:cvs:cvs
             }
             svn {
-                if {${os.platform} == "darwin" && ${os.major} >= 10} {
+                if {${os.major} >= 10 || ${os.platform} ne "darwin"} {
                     depends_fetch-append bin:svn:subversion
                 } else {
                     depends_fetch-append port:subversion
                 }
             }
             git {
-                depends_fetch-append bin:git:git-core
+                depends_fetch-append bin:git:git
             }
             hg {
                 depends_fetch-append bin:hg:mercurial
@@ -195,7 +201,7 @@ proc portfetch::set_fetch_type {option action args} {
 proc portfetch::find_svn_path {args} {
     global prefix os.platform os.major
     # Snow Leopard is the first Mac OS X version to include a recent enough svn (1.6.x) to support the --trust-server-cert option.
-    if {${os.platform} == "darwin" && ${os.major} >= 10} {
+    if {${os.major} >= 10 || ${os.platform} ne "darwin"} {
         return [findBinary svn $portutil::autoconf::svn_path]
     } else {
         return ${prefix}/bin/svn
@@ -225,7 +231,7 @@ proc portfetch::checkpatchfiles {urls} {
                 set distsite [getdisttag $file]
                 set file [getdistname $file]
                 lappend all_dist_files $file
-                if {$distsite != ""} {
+                if {$distsite ne ""} {
                     lappend fetch_urls $distsite $file
                 } elseif {[info exists patch_sites]} {
                     lappend fetch_urls patch_sites $file
@@ -248,7 +254,7 @@ proc portfetch::checkdistfiles {urls} {
                 set distsite [getdisttag $file]
                 set file [getdistname $file]
                 lappend all_dist_files $file
-                if {$distsite != ""} {
+                if {$distsite ne ""} {
                     lappend fetch_urls $distsite $file
                 } else {
                     lappend fetch_urls master_sites $file
@@ -267,11 +273,11 @@ proc portfetch::get_full_mirror_sites_path {} {
 # Perform the full checksites/checkpatchfiles/checkdistfiles sequence.
 # This method is used by distcheck target.
 proc portfetch::checkfiles {urls} {
-    global global_mirror_site fallback_mirror_site
+    global global_mirror_site
     upvar $urls fetch_urls
 
-    checksites [list patch_sites [list $global_mirror_site $fallback_mirror_site PATCH_SITE_LOCAL] \
-                master_sites [list $global_mirror_site $fallback_mirror_site MASTER_SITE_LOCAL]] \
+    checksites [list patch_sites [list $global_mirror_site PATCH_SITE_LOCAL] \
+                master_sites [list $global_mirror_site MASTER_SITE_LOCAL]] \
                [get_full_mirror_sites_path]
     checkpatchfiles fetch_urls
     checkdistfiles fetch_urls
@@ -385,7 +391,7 @@ proc portfetch::svn_proxy_args {url} {
     }
     regexp {(.*://)?([[:alnum:].-]+)(:(\d+))?} $proxy_str - - proxy_host - proxy_port
     set ret "--config-option servers:global:http-proxy-host=${proxy_host}"
-    if {$proxy_port != ""} {
+    if {$proxy_port ne ""} {
         append ret " --config-option servers:global:http-proxy-port=${proxy_port}"
     }
     return $ret
@@ -424,7 +430,7 @@ proc portfetch::gitfetch {args} {
            git.url git.branch git.sha1 git.cmd
 
     set options "-q"
-    if {[string length ${git.branch}] == 0} {
+    if {${git.branch} eq ""} {
         # if we're just using HEAD, we can make a shallow repo
         set options "$options --depth=1"
     }
@@ -434,7 +440,7 @@ proc portfetch::gitfetch {args} {
         return -code error [msgcat::mc "Git clone failed"]
     }
 
-    if {[string length ${git.branch}] > 0} {
+    if {${git.branch} ne ""} {
         set env "GIT_DIR=${worksrcpath}/.git GIT_WORK_TREE=${worksrcpath}"
         set cmdstring "$env ${git.cmd} checkout -q ${git.branch} 2>&1"
         ui_debug "Executing $cmdstring"
@@ -478,7 +484,7 @@ proc portfetch::hgfetch {args} {
 proc portfetch::fetchfiles {args} {
     global distpath all_dist_files UI_PREFIX \
            fetch.user fetch.password fetch.use_epsv fetch.ignore_sslcert fetch.remote_time \
-           fallback_mirror_site portverbose usealtworkpath altprefix
+           portverbose usealtworkpath altprefix
     variable fetch_urls
     variable urlmap
 
@@ -496,14 +502,18 @@ proc portfetch::fetchfiles {args} {
     if {${fetch.remote_time} != "no"} {
         lappend fetch_options "--remote-time"
     }
-    if {$portverbose == "yes"} {
-        lappend fetch_options "-v"
+    if {$portverbose eq "yes"} {
+        lappend fetch_options "--progress"
+        lappend fetch_options "builtin"
+    } elseif {[llength [info commands ui_progress_download]] > 0} {
+        lappend fetch_options "--progress"
+        lappend fetch_options "ui_progress_download"
     }
     set sorted no
 
     foreach {url_var distfile} $fetch_urls {
         if {![file isfile "${distpath}/${distfile}"]} {
-            ui_info "$UI_PREFIX [format [msgcat::mc "%s doesn't seem to exist in %s"] $distfile $distpath]"
+            ui_info "$UI_PREFIX [format [msgcat::mc "%s does not exist in %s"] $distfile $distpath]"
             if {![file writable $distpath]} {
                 return -code error [format [msgcat::mc "%s must be writable"] $distpath]
             }
@@ -516,7 +526,7 @@ proc portfetch::fetchfiles {args} {
                 continue
             }
             if {!$sorted} {
-                sortsites fetch_urls [mirror_sites $fallback_mirror_site {} {} [get_full_mirror_sites_path]] master_sites
+                sortsites fetch_urls master_sites
                 set sorted yes
             }
             if {![info exists urlmap($url_var)]} {
@@ -524,20 +534,28 @@ proc portfetch::fetchfiles {args} {
                 set urlmap($url_var) $urlmap(master_sites)
             }
             unset -nocomplain fetched
+            set lastError ""
             foreach site $urlmap($url_var) {
                 ui_notice "$UI_PREFIX [format [msgcat::mc "Attempting to fetch %s from %s"] $distfile $site]"
                 set file_url [portfetch::assemble_url $site $distfile]
-                if {![catch {eval curl fetch $fetch_options {$file_url} {"${distpath}/${distfile}.TMP"}} result] &&
-                    ![catch {file rename -force "${distpath}/${distfile}.TMP" "${distpath}/${distfile}"} result]} {
+                try -pass_signal {
+                    curl fetch {*}$fetch_options $file_url "${distpath}/${distfile}.TMP"
+                    file rename -force "${distpath}/${distfile}.TMP" "${distpath}/${distfile}"
                     set fetched 1
                     break
-                } else {
-                    ui_debug "[msgcat::mc "Fetching distfile failed"]: $result"
+                } catch {{*} eCode eMessage} {
+                    ui_debug [msgcat::mc "Fetching distfile failed: %s" $eMessage]
+                    set lastError $eMessage
+                } finally {
                     file delete -force "${distpath}/${distfile}.TMP"
                 }
             }
             if {![info exists fetched]} {
-                return -code error [msgcat::mc "fetch failed"]
+                if {$lastError ne ""} {
+                    error $lastError
+                } else {
+                    error [msgcat::mc "fetch failed"]
+                }
             }
         }
     }

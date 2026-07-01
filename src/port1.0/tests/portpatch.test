@@ -1,11 +1,11 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
 package require tcltest 2
 namespace import tcltest::*
 
-set pwd [file normalize $argv0]
-set pwd [eval file join {*}[lrange [file split $pwd] 0 end-1]]
+set pwd [file dirname [file normalize $argv0]]
 
 source ../port_test_autoconf.tcl
-source $macports::autoconf::macports_tcl_dir/macports1.0/macports_fastload.tcl
 package require macports 1.0
 
 array set ui_options {}
@@ -13,11 +13,10 @@ array set ui_options {}
 #set ui_options(ports_verbose) yes
 mportinit ui_options
 
-source ./library.tcl
-macports_worker_init
-
 package require portpatch
 source ../port_autoconf.tcl
+source ./library.tcl
+macports_worker_init
 
 
 test build_getpatchtype {
@@ -25,7 +24,7 @@ test build_getpatchtype {
 } -body {
     set res [portpatch::build_getpatchtype]
     if {$res != $portutil::autoconf::patch_path} {
-		return "FAIL: wrong path"
+        return "FAIL: wrong path"
     }
     return "Get patch type successful."
 } -result "Get patch type successful."
@@ -38,7 +37,7 @@ test patch_main {
 } -setup {
     set macosx_version 12
 
-    set subport fondu
+    set subport gcc_select
     set filespath $pwd/files
     set distpath $pwd/dist
     set usealtworkpath yes
@@ -63,7 +62,7 @@ test patch_main {
     if {[$workername eval eval_targets patch]} {
         return "FAIL: cannot run patch"
     }
-    if {![file exists $pwd/work/fondu-060102/test_patch]} {
+    if {![file exists $pwd/work/select-0.1/test_patch]} {
         return "FAIL: missing patched file"
     }
     return "Patch successful."

@@ -43,6 +43,7 @@ target_state ${org.macports.activate} no
 target_provides ${org.macports.activate} activate
 target_requires ${org.macports.activate} main archivefetch fetch checksum extract patch configure build destroot install
 target_prerun ${org.macports.activate} portactivate::activate_start
+target_postrun ${org.macports.activate} portactivate::activate_finish
 
 namespace eval portactivate {
 }
@@ -59,50 +60,29 @@ proc portactivate::activate_start {args} {
 }
 
 proc portactivate::activate_main {args} {
-    global env subport version revision portvariants user_options PortInfo startupitem.autostart UI_PREFIX
+    global subport version revision portvariants user_options PortInfo
 
     registry_activate $subport $version $revision $portvariants [array get user_options]
 
-    # Display notes at the end of the activation phase.
-    if {[info exists PortInfo(notes)] && $PortInfo(notes) ne {}} {
-        ui_notice ""
-        foreach note $PortInfo(notes) {
-            # If env(COLUMNS) exists, limit each line's width to this width.
-            if {[info exists env(COLUMNS)]} {
-                set maxlen $env(COLUMNS)
+    return 0
+}
 
-                foreach line [split $note "\n"] {
-                    set joiner ""
-                    set lines ""
-                    set newline ""
+proc portactivate::activate_finish {args} {
+    global subport startupitem.autostart PortInfo UI_PREFIX
 
-                    foreach word [split $line " "] {
-                        if {[string length $newline] + [string length $word] >= $maxlen} {
-                            lappend lines $newline
-                            set newline ""
-                            set joiner ""
-                        }
-                        append newline $joiner $word
-                        set joiner " "
-                    }
-                    if {$newline ne {}} {
-                        lappend lines $newline
-                    }
-                    ui_notice [join $lines "\n"]
-                }
-            } else {
-                ui_notice $note
-            }
-        }
-        ui_notice ""
-    }
-
+    # Do this _after_ activate_main, because post-activate hooks might create
+    # the files needed for this
     if {[tbool startupitem.autostart]} {
-        ui_notice "$UI_PREFIX [format [msgcat::mc "Loading %s"] [option subport]]"
+        ui_notice "$UI_PREFIX [format [msgcat::mc "Loading %s"] $subport]"
         if {[eval_targets "load"]} {
-            ui_error [format [msgcat::mc "Failed to load %s"] [option subport]]
+            ui_error [format [msgcat::mc "Failed to load %s"] $subport]
             return 1
         }
+    }
+
+    # Save notes for display by the port client
+    if {[info exists PortInfo(notes)] && [llength $PortInfo(notes)] > 0} {
+        ui_notifications_append $subport $PortInfo(notes)
     }
 
     return 0

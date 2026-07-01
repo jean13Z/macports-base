@@ -93,8 +93,8 @@ default startupitem.uniquename  {org.macports.${startupitem.name}}
 set_ui_prefix
 
 proc portdestroot::destroot_getargs {args} {
-    if {(([option build.type] == "default" && [option os.platform] != "freebsd") || \
-         ([option build.type] == "gnu")) \
+    if {(([option build.type] eq "default" && [option os.platform] ne "freebsd") || \
+         ([option build.type] eq "gnu")) \
         && [regexp "^(/\\S+/|)(g|gnu|)make(\\s+.*|)$" [option destroot.cmd]]} {
         # Print "Entering directory" lines for better log debugging
         return "-w [option destroot.target]"
@@ -163,7 +163,7 @@ proc portdestroot::destroot_finish {args} {
     }
 
     foreach fileToDelete {share/info/dir lib/charset.alias} {
-        if [file exists "${destroot}${prefix}/${fileToDelete}"] {
+        if {[file exists "${destroot}${prefix}/${fileToDelete}"]} {
             ui_debug "Deleting stray ${fileToDelete} file."
             file delete "${destroot}${prefix}/${fileToDelete}"
         }
@@ -171,23 +171,33 @@ proc portdestroot::destroot_finish {args} {
 
     # Prevent overlinking due to glibtool .la files: https://trac.macports.org/ticket/38010
     ui_debug "Fixing glibtool .la files in destroot for ${subport}"
+    set la_file_list [list]
     fs-traverse -depth fullpath ${destroot} {
-        if {[file extension $fullpath] == ".la" && [file type $fullpath] == "file"} {
+        if {[file extension $fullpath] eq ".la" && ([file type $fullpath] eq "file" || [file type $fullpath] eq "link")} {
+            if {[file type $fullpath] eq "link" && [file pathtype [file link $fullpath]] ne "relative"} {
+                # prepend $destroot to target of absolute symlinks
+                set checkpath ${destroot}[file link $fullpath]
+            } else {
+                set checkpath $fullpath
+            }
             # Make sure it is from glibtool ... "a libtool library file" will appear in the first line
-            if {![catch {set fp [open $fullpath]}]} {
+            if {![catch {set fp [open $checkpath]}]} {
                 if {[gets $fp line] > 0 && [string first "a libtool library file" $line] != -1} {
-                    if {${destroot.delete_la_files}} {
-                        ui_debug "Removing [file tail $fullpath]"
-                        file delete -force ${fullpath}
-                    } else {
-                        ui_debug "Clearing dependency_libs in [file tail $fullpath]"
-                        reinplace "/dependency_libs/ s/'.*'/''/" ${fullpath}
-                    }
+                    lappend la_file_list $fullpath
                 }
             } else {
-                ui_debug "Failed to open $fullpath"
+                ui_debug "Failed to open $checkpath"
             }
             catch {close $fp}
+        }
+    }
+    foreach fullpath $la_file_list {
+        if {${destroot.delete_la_files}} {
+            ui_debug "Removing [file tail $fullpath]"
+            file delete -force ${fullpath}
+        } elseif {[file type $fullpath] eq "file"} {
+            ui_debug "Clearing dependency_libs in [file tail $fullpath]"
+            reinplace "/dependency_libs/ s/'.*'/''/" ${fullpath}
         }
     }
 
@@ -201,7 +211,7 @@ proc portdestroot::destroot_finish {args} {
         }
     }
     fs-traverse -depth dir ${destroot} {
-        if {[file type $dir] == "directory"} {
+        if {[file type $dir] eq "directory"} {
             catch {file delete $dir}
         }
     }
@@ -221,32 +231,32 @@ proc portdestroot::destroot_finish {args} {
     set gzip [findBinary gzip ${portutil::autoconf::gzip_path}]
     set gunzip "$gzip -d"
     set bunzip2 "[findBinary bzip2 ${portutil::autoconf::bzip2_path}] -d"
-    if {[file isdirectory ${manpath}] && [file type ${manpath}] == "directory"} {
+    if {[file isdirectory ${manpath}] && [file type ${manpath}] eq "directory"} {
         ui_info "$UI_PREFIX [format [msgcat::mc "Compressing man pages for %s"] ${subport}]"
         set found 0
         set manlinks [list]
         foreach mandir [readdir "${manpath}"] {
             if {![regexp {^(cat|man)(.)$} ${mandir} match ignore manindex]} { continue }
             set mandirpath [file join ${manpath} ${mandir}]
-            if {[file isdirectory ${mandirpath}] && [file type ${mandirpath}] == "directory"} {
+            if {[file isdirectory ${mandirpath}] && [file type ${mandirpath}] eq "directory"} {
                 ui_debug "Scanning ${mandir}"
                 foreach manfile [readdir ${mandirpath}] {
                     set manfilepath [file join ${mandirpath} ${manfile}]
-                    if {[file isfile ${manfilepath}] && [file type ${manfilepath}] == "file"} {
+                    if {[file isfile ${manfilepath}] && [file type ${manfilepath}] eq "file"} {
                         if {[regexp "^(.*\[.\]${manindex}\[a-z\]*)\[.\]gz\$" ${manfile} gzfile manfile]} {
                             set found 1
                             system "cd ${manpath} && \
                             $gunzip -f [file join ${mandir} ${gzfile}] && \
-                            $gzip -9vf [file join ${mandir} ${manfile}]"
+                            $gzip -9vnf [file join ${mandir} ${manfile}]"
                         } elseif {[regexp "^(.*\[.\]${manindex}\[a-z\]*)\[.\]bz2\$" ${manfile} bz2file manfile]} {
                             set found 1
                             system "cd ${manpath} && \
                             $bunzip2 -f [file join ${mandir} ${bz2file}] && \
-                            $gzip -9vf [file join ${mandir} ${manfile}]"
+                            $gzip -9vnf [file join ${mandir} ${manfile}]"
                         } elseif {[regexp "\[.\]${manindex}\[a-z\]*\$" ${manfile}]} {
                             set found 1
                             system "cd ${manpath} && \
-                            $gzip -9vf [file join ${mandir} ${manfile}]"
+                            $gzip -9vnf [file join ${mandir} ${manfile}]"
                         }
                         set gzmanfile ${manfile}.gz
                         set gzmanfilepath [file join ${mandirpath} ${gzmanfile}]
@@ -258,7 +268,7 @@ proc portdestroot::destroot_finish {args} {
                                 file attributes ${gzmanfilepath} -permissions $desired
                             }
                         }
-                    } elseif {[file type ${manfilepath}] == "link"} {
+                    } elseif {[file type ${manfilepath}] eq "link"} {
                         lappend manlinks [file join ${mandir} ${manfile}]
                     }
                 }
@@ -331,19 +341,19 @@ proc portdestroot::destroot_finish {args} {
                         if {$pfile eq "." || $pfile eq ".."} {
                             continue
                         }
-                        if {[lsearch -exact $prefixPaths $pfile] == -1} {
+                        if {$pfile ni $prefixPaths} {
                             ui_warn "violation by [file join $dfile $pfile]"
                             set mtree_violation "yes"
                         }
                     }
-                } elseif {[string equal -length [expr [string length $dfile] + 1] $dfile/ $prefix]} {
+                } elseif {[string equal -length [expr {[string length $dfile] + 1}] $dfile/ $prefix]} {
                     # we've found a subpath of our prefix
                     lpush pathsToCheck $dfile
                 } else {
                     set dir_allowed no
                     # these files are (at least potentially) outside of the prefix
                     foreach dir "$applications_dir $frameworks_dir /Library/LaunchAgents /Library/LaunchDaemons /Library/StartupItems" {
-                        if {[string equal -length [expr [string length $dfile] + 1] $dfile/ $dir]} {
+                        if {[string equal -length [expr {[string length $dfile] + 1}] $dfile/ $dir]} {
                             # it's a prefix of one of the allowed paths
                             set dir_allowed yes
                             break

@@ -1,11 +1,11 @@
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:ft=tcl:et:sw=4:ts=4:sts=4
+
 package require tcltest 2
 namespace import tcltest::*
 
-set pwd [file normalize $argv0]
-set pwd [eval file join {*}[lrange [file split $pwd] 0 end-1]]
+set pwd [file dirname [file normalize $argv0]]
 
 source ../port_test_autoconf.tcl
-source $macports::autoconf::macports_tcl_dir/macports1.0/macports_fastload.tcl
 package require macports 1.0
 
 array set ui_options {}
@@ -13,42 +13,74 @@ array set ui_options {}
 #set ui_options(ports_verbose) yes
 mportinit ui_options
 
+package require portactivate 1.0
+package require registry 1.0
 source ./library.tcl
 macports_worker_init
 
-package require portactivate 1.0
-package require registry 1.0
 
-test activate_start {
-    Activate start unit test.
-    Requires root for setting euid.
-} -constraints {
-    root
-} -setup {
+set activate_start_fixture_setup {
+    global prefix
+
+    set _save_prefix ${prefix}
+    file mkdir ${pwd}/tmpdir
+    set prefix ${pwd}/tmpdir
+
+    rename getuid _save_getuid
+    rename geteuid _save_geteuid
+
+    set fake_uid 0
+    set fake_euid 0
+    set elevateToRootCalls [list]
+
+    proc getuid {} {
+        global fake_uid
+        return ${fake_uid}
+    }
+    proc geteuid {} {
+        global fake_euid
+        return ${fake_euid}
+    }
+
+    proc elevateToRoot {phase} {
+        global elevateToRootCalls
+        lappend elevateToRootCalls $phase
+    }
+}
+set activate_start_fixture_cleanup {
+    rename getuid ""
+    rename geteuid ""
+
+    rename _save_getuid getuid
+    rename _save_geteuid geteuid
+
+    file delete -force ${pwd}/tmpdir
+}
+
+test activate_start_elevate {
+    Test portactivate::activate_start to make sure it elevates to root if necessary
+} -setup $activate_start_fixture_setup -cleanup $activate_start_fixture_cleanup -body {
     # file writable $prefix is used to determine whether privilege escalation
     # is needed, so set prefix to a directory unwritable for this user
     set prefix /usr/bin
+    set fake_uid 0
+    set fake_euid 500
 
-    # elevateToRoot uses $euid and $egid as the IDs to set
-    set euid 0
-    set egid 0
+    portactivate::activate_start
 
-} -body {
-    # drop privileges; the code won't attempt to elevate privileges without
-    # that
-    seteuid 333
-    if {[catch {portactivate::activate_start args}] != 0} {
-        return "FAIL: couldn't elevate privileges"
-    }
+    return ${elevateToRootCalls}
+} -result [list "activate"] -errorOutput ""
 
-    # when uid == 0 and euid == 0, the code will not attempt to elevate
-    # privileges
-    seteuid 0
-    if {[catch {portactivate::activate_start args}] != 0} {
-        return "FAIL: couldn't elevate privileges"
-    }
-    return "Activate_start successful."
-} -result "Activate_start successful."
+test activate_start_noelevate {
+    Test portactivate::activate_start to make sure that it does not elevate to root if it cannot
+} -setup $activate_start_fixture_setup -cleanup $activate_start_fixture_cleanup -body {
+    set fake_uid 500
+    set fake_euid 500
+
+    portactivate::activate_start
+
+    return ${elevateToRootCalls}
+} -result [list] -errorOutput ""
 
 
 test activate_main {
@@ -75,18 +107,18 @@ test activate_main {
     set macports::channels(notice) {}
 
     if {[$workername eval eval_targets install] != 0} {
-		return "FAIL: port install failed"
+        return "FAIL: port install failed"
     }
 
 } -body {
     if {[$workername eval eval_targets activate] != 0} {
-		return "FAIL: cannot activate port after install"
+        return "FAIL: cannot activate port after install"
     }
     if {[$workername eval eval_targets deactivate] != 0} {
         return "FAIL: cannot deactivate port"
     }
     if {[$workername eval eval_targets activate] != 0} {
-		return "FAIL: cannot activate port after deactivate"
+        return "FAIL: cannot activate port after deactivate"
     }
     return "Port activate successful."
 
@@ -100,7 +132,7 @@ test activate_main {
     array set macports::channels $oldchannels
 
     mportclose $mport
-} -result "Port activate successful."
+} -result "Port activate successful." -errorOutput ""
 
 
 cleanupTests

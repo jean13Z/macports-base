@@ -53,13 +53,13 @@ default checksum.skip false
 set_ui_prefix
 
 # The list of the types of checksums we know.
-set checksum_types "md5 sha1 rmd160 sha256"
+set checksum_types [list md5 sha1 rmd160 sha256 size]
 
 # The number of types we know.
 set checksum_types_count [llength $checksum_types]
 
 # types to recommend if none are specified in the portfile
-set default_checksum_types {rmd160 sha256}
+set default_checksum_types [list rmd160 sha256]
 
 # Using global all_dist_files, parse the checksums and store them into the
 # global array checksums_array.
@@ -82,9 +82,9 @@ proc portchecksum::parse_checksums {checksums_str} {
     set nb_checksum [llength $checksums_str]
 
     if {[llength $all_dist_files] == 1
-        && [expr $nb_checksum % 2] == 0
-        && [expr $nb_checksum / 2] <= $checksum_types_count
-        && [lsearch -exact $checksum_types [lindex $checksums_str 0]] >= 0} {
+        && [expr {$nb_checksum % 2}] == 0
+        && [expr {$nb_checksum / 2}] <= $checksum_types_count
+        && [lindex $checksums_str 0] in $checksum_types} {
         # Convert to format #2
         set checksums_str [linsert $checksums_str 0 [lindex $all_dist_files 0]]
         # We increased the size.
@@ -113,7 +113,7 @@ proc portchecksum::parse_checksums {checksums_str} {
             incr ix_checksum
             while {1} {
                 set checksum_type [lindex $checksums_str $ix_checksum]
-                if {[lsearch -exact $checksum_types $checksum_type] >= 0} {
+                if {$checksum_type in $checksum_types} {
                     # append the type and the value.
                     incr ix_checksum
                     set checksum_value [lindex $checksums_str $ix_checksum]
@@ -185,6 +185,15 @@ proc portchecksum::calc_sha256 {file} {
     return [sha256 file $file]
 }
 
+# calc_size
+#
+# Get the size of the given file.
+# Return the size.
+#
+proc portchecksum::calc_size {file} {
+    return [file size $file]
+}
+
 # checksum_start
 #
 # Target prerun procedure; simply prints a message about what we're doing.
@@ -222,11 +231,11 @@ proc portchecksum::checksum_main {args} {
     set checksums_str [option checksums]
 
     # store the calculated checksums to avoid repeated calculations
-    set sums ""
+    array set calculated_checksums_array {}
 
     # if everything is fine with the syntax, keep on and check the checksum of
     # the distfiles.
-    if {[parse_checksums $checksums_str] == "yes"} {
+    if {[parse_checksums $checksums_str] eq "yes"} {
         set distpath [option distpath]
 
         foreach distfile $all_dist_files {
@@ -242,43 +251,39 @@ proc portchecksum::checksum_main {args} {
                 }
             }
 
-            if {[llength $all_dist_files] > 1} {
-                lappend sums $distfile
-            }
-
             # check that there is at least one checksum for the distfile.
             if {![info exists checksums_array($distfile)] || [llength $checksums_array($distfile)] < 1} {
                 ui_error "[format [msgcat::mc "No checksum set for %s"] $distfile]"
                 set fail yes
-
-                # no checksums specified; output the default set
-                foreach type $default_checksum_types {
-                    lappend sums [format "%-8s%s" $type [calc_$type $fullpath]]
-                }
-
             } else {
                 # retrieve the list of types/values from the array.
                 set portfile_checksums $checksums_array($distfile)
+                set calculated_checksums {}
 
                 # iterate on this list to check the actual values.
                 foreach {type sum} $portfile_checksums {
                     set calculated_sum [calc_$type $fullpath]
-                    lappend sums [format "%-8s%s" $type $calculated_sum]
+                    lappend calculated_checksums $type
+                    lappend calculated_checksums $calculated_sum
 
 		    # Used for regression testing
                     ui_debug "[format [msgcat::mc "Calculated (%s) is %s"] $type $calculated_sum]"
 
-                    if {[string equal $sum $calculated_sum]} {
+                    if {$sum eq $calculated_sum} {
                         ui_debug "[format [msgcat::mc "Correct (%s) checksum for %s"] $type $distfile]"
                     } else {
                         ui_error "[format [msgcat::mc "Checksum (%s) mismatch for %s"] $type $distfile]"
-                        ui_info_fetch "[format [msgcat::mc "Portfile checksum: %s %s %s"] $distfile $type $sum]"
+                        ui_info "[format [msgcat::mc "Portfile checksum: %s %s %s"] $distfile $type $sum]"
                         ui_info "[format [msgcat::mc "Distfile checksum: %s %s %s"] $distfile $type $calculated_sum]"
 
                         # Raise the failure flag
                         set fail yes
                     }
                 }
+
+                # Save our calculated checksums in case we need them later
+                set calculated_checksums_array($distfile) $calculated_checksums
+
                 if {[tbool fail] && ![regexp {\.html?$} ${distfile}] &&
                     ![catch {strsed [exec [findBinary file $portutil::autoconf::file_path] $fullpath --brief --mime] {s/;.*$//}} mimetype]
                     && "text/html" == $mimetype} {
@@ -310,6 +315,49 @@ proc portchecksum::checksum_main {args} {
             ui_notice "The file has been moved to: $htmlfile_path"
         } else {
             # Show the desired checksum line for easy cut-paste
+            # based on the previously calculated values, plus our default types
+            set sums {}
+
+            foreach distfile $all_dist_files {
+                if {[llength $all_dist_files] > 1} {
+                    lappend sums $distfile
+                }
+
+                set missing_types $default_checksum_types
+
+                # Append the string for the calculated types and note any of
+                # our default types that were already calculated
+                if {[info exists calculated_checksums_array($distfile)] && [llength $calculated_checksums_array($distfile)]} {
+                    set calculated_checksums $calculated_checksums_array($distfile)
+                    foreach {type sum} $calculated_checksums {
+                        lappend sums [format "%-8s%s" $type $sum]
+
+                        set found [lsearch -exact ${missing_types} ${type}];
+                        if { ${found} != -1} {
+                            set missing_types [lreplace ${missing_types} ${found} ${found}]
+                        }
+                    }
+                }
+
+                # Append the string for any of our default types that were
+                # note previously calculated
+                if {[llength $missing_types]} {
+                    # get the full path of the distfile.
+                    set fullpath [file join $distpath $distfile]
+                    if {![file isfile $fullpath]} {
+                        if {!$usealtworkpath && [file isfile "${altprefix}${fullpath}"]} {
+                            set fullpath "${altprefix}${fullpath}"
+                        } else {
+                            return -code error "$distfile does not exist in $distpath"
+                        }
+                    }
+
+                    foreach type $missing_types {
+                        lappend sums [format "%-8s%s" $type [calc_$type $fullpath]]
+                    }
+                }
+            }
+
             ui_info "The correct checksum line may be:"
             ui_info [format "%-20s%s" "checksums" [join $sums [format " \\\n%-20s" ""]]]
         }

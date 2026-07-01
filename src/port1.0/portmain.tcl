@@ -51,7 +51,7 @@ options prefix name version revision epoch categories maintainers \
         long_description description homepage notes license \
         provides conflicts replaced_by \
         worksrcdir filesdir distname portdbpath libpath distpath sources_conf \
-        os.platform os.subplatform os.version os.major os.arch os.endian \
+        os.platform os.subplatform os.version os.major os.minor os.arch os.endian \
         platforms default_variants install.user install.group \
         macosx_deployment_target universal_variant os.universal_supported \
         supported_archs depends_skip_archcheck installs_libs \
@@ -67,7 +67,7 @@ option_proc default_variants handle_default_variants
 option_proc notes handle_option_string
 
 # Export options via PortInfo
-options_export name version revision epoch categories maintainers platforms description long_description notes homepage license provides conflicts replaced_by installs_libs license_noconflict
+options_export name version revision epoch categories maintainers platforms description long_description notes homepage license provides conflicts replaced_by installs_libs license_noconflict patchfiles
 
 default subport {[portmain::get_default_subport]}
 proc portmain::get_default_subport {} {
@@ -80,12 +80,12 @@ proc portmain::get_default_subport {} {
 default subbuildpath {[portmain::get_subbuildpath]}
 proc portmain::get_subbuildpath {} {
     global portpath portbuildpath subport
-    if {$subport != ""} {
+    if {$subport ne ""} {
         set subdir $subport
     } else {
         set subdir [file tail $portpath]
     }
-    return [file join $portbuildpath $subdir]
+    return [file normalize [file join $portbuildpath $subdir]]
 }
 default workpath {[getportworkpath_from_buildpath $subbuildpath]}
 default prefix /opt/local
@@ -116,11 +116,12 @@ default install.group {${portutil::autoconf::install_group}}
 default os.platform {$os_platform}
 default os.version {$os_version}
 default os.major {$os_major}
+default os.minor {$os_minor}
 default os.arch {$os_arch}
 default os.endian {$os_endian}
 
 set macosx_version_text {}
-if {[option os.platform] == "darwin"} {
+if {[option os.platform] eq "darwin"} {
     set macosx_version_text "(Mac OS X ${macosx_version}) "
 }
 ui_debug "OS [option os.platform]/[option os.version] ${macosx_version_text}arch [option os.arch]"
@@ -128,7 +129,7 @@ ui_debug "OS [option os.platform]/[option os.version] ${macosx_version_text}arch
 default universal_variant {${use_configure}}
 
 # sub-platforms of darwin
-if {[option os.platform] == "darwin"} {
+if {[option os.platform] eq "darwin"} {
     if {[file isdirectory /System/Library/Frameworks/Carbon.framework]} {
         default os.subplatform macosx
         # we're on Mac OS X and can therefore build universal
@@ -159,16 +160,16 @@ if { $euid != 0 && (([info exists workpath] && [file exists $workpath] && ![file
     # set global variable indicating to other functions to use ~/.macports as well
     set usealtworkpath yes
 
-    default worksymlink {[file join ${altprefix}${portpath} work]}
-    default distpath {[file join ${altprefix}${portdbpath} distfiles ${dist_subdir}]}
+    default worksymlink {[file normalize [file join ${altprefix}${portpath} work]]}
+    default distpath {[file normalize [file join ${altprefix}${portdbpath} distfiles ${dist_subdir}]]}
     set portbuildpath "${altprefix}${portbuildpath}"
 
     ui_debug "Going to use alternate build prefix: $altprefix"
     ui_debug "workpath = $workpath"
 } else {
     set usealtworkpath no
-    default worksymlink {[file join $portpath work]}
-    default distpath {[file join $portdbpath distfiles ${dist_subdir}]}
+    default worksymlink {[file normalize [file join $portpath work]]}
+    default distpath {[file normalize [file join $portdbpath distfiles ${dist_subdir}]]}
 }
 
 # end gsoc08-privileges

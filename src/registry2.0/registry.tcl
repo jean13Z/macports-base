@@ -156,10 +156,10 @@ proc installed {{name ""} {version ""}} {
     }
     
     if { [llength $rlist] < 1 } {
-        if { $name == "" } {
+        if { $name eq "" } {
             return -code error "Registry error: No ports registered as installed."
         } else {
-            if { $version == "" } {
+            if { $version eq "" } {
                 return -code error "Registry error: $name not registered as installed."
             } else {
                 return -code error "Registry error: $name $version not registered as installed."
@@ -196,7 +196,7 @@ proc active {{name ""}} {
     }
 	
 	if { [llength $rlist] < 1 } {
-		if { $name == "" } {
+		if { $name eq "" } {
 			return -code error "Registry error: No ports registered as active."
 		} else {
 			return -code error "Registry error: $name not registered as installed & active."
@@ -311,7 +311,7 @@ proc open_dep_map {args} {
 # 2: gid
 # 3: mode
 # 4: size
-# 5: md5 checksum information
+# 5: md5 checksum information (deprecated, will always be "MD5 ($filename) NONE")
 #
 # fname		a path to a given file.
 # return a 6-tuple about this file.
@@ -320,16 +320,7 @@ proc fileinfo_for_file {fname} {
     # (we won't store the md5 of the target of links since it's meaningless
     # and $statvar(mode) tells us that links are links).
     if {![catch {file lstat $fname statvar}]} {
-	if {[::file isfile $fname] && [::file type $fname] != "link"} {
-	    if {[catch {md5 file $fname} md5sum] == 0} {
-		# Create a line that matches md5(1)'s output
-		# for backwards compatibility
-		set line "MD5 ($fname) = $md5sum"
-		return [list $fname $statvar(uid) $statvar(gid) $statvar(mode) $statvar(size) $line]
-	    }
-	} else {
-	    return  [list $fname $statvar(uid) $statvar(gid) $statvar(mode) $statvar(size) "MD5 ($fname) NONE"]
-	}
+        return [list $fname $statvar(uid) $statvar(gid) $statvar(mode) $statvar(size) "MD5 ($fname) NONE"]
     }
     return {}
 }
@@ -346,7 +337,7 @@ proc fileinfo_for_index {flist} {
 
 	set rval [list]
 	foreach file $flist {
-		if {[string index $file 0] != "/"} {
+		if {[string index $file 0] ne "/"} {
 			set file [::file join $prefix $file]
 		}
 		lappend rval [fileinfo_for_file $file]
@@ -404,11 +395,11 @@ proc exclusive_lock {} {
         }
         set lockfd [::open $lockpath w]
     }
-    if {[catch {flock $lockfd -exclusive -noblock} result]} {
-        if {$result == "EAGAIN"} {
+    if {[catch {adv-flock $lockfd -exclusive -noblock} result]} {
+        if {$result eq "EAGAIN"} {
             ui_msg "Waiting for lock on $lockpath"
-            flock $lockfd -exclusive
-        } elseif {$result == "EOPNOTSUPP"} {
+            adv-flock $lockfd -exclusive
+        } elseif {$result eq "EOPNOTSUPP"} {
             # Locking not supported, just return
             ui_debug "flock not supported, not locking registry"
         } else {
@@ -429,7 +420,7 @@ proc exclusive_unlock {} {
     }
     if {[info exists lockfd]} {
         # not much point trying to handle errors
-        catch {flock $lockfd -unlock}
+        catch {adv-flock $lockfd -unlock}
     }
 }
 
@@ -457,7 +448,7 @@ proc convert_to_sqlite {} {
         set installtype [receipt_flat::property_retrieve $iref installtype]
         lappend proplist installtype $installtype
         set location [receipt_flat::property_retrieve $iref location]
-        if {$location == "0"} {
+        if {$location == 0} {
             set location [receipt_flat::property_retrieve $iref imagedir]
         }
         set contents [receipt_flat::property_retrieve $iref contents]
@@ -466,7 +457,7 @@ proc convert_to_sqlite {} {
         foreach f $contents {
             set fullpath [lindex $f 0]
             # strip image dir from start
-            if {[string range $fullpath 0 [expr $idlen - 1]] == $location} {
+            if {[string range $fullpath 0 [expr {$idlen - 1}]] == $location} {
                 set path [string range $fullpath $idlen [string length $fullpath]]
             } else {
                 set path $fullpath

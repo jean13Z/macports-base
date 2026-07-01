@@ -61,7 +61,7 @@ proc portdistcheck::distcheck_main {args} {
     ui_debug "Portfile modification date is [clock format $port_moddate]"
 
     set curl_options {}
-    if [tbool fetch.ignore_sslcert] {
+    if {[tbool fetch.ignore_sslcert]} {
         lappend curl_options "--ignore-ssl-cert"
     }
 
@@ -85,13 +85,14 @@ proc portdistcheck::distcheck_main {args} {
                 foreach site $urlmap($url_var) {
                     ui_debug [format [msgcat::mc "Checking %s from %s"] $distfile $site]
                     set file_url [portfetch::assemble_url $site $distfile]
-                    if {[catch {set urlnewer [eval curl isnewer $curl_options {$file_url} $port_moddate]} error]} {
-                        ui_warn "couldn't fetch $file_url for $subport ($error)"
-                    } else {
+                    try -pass_signal {
+                        set urlnewer [curl isnewer {*}$curl_options $file_url $port_moddate]
                         if {$urlnewer} {
                             ui_warn "port $subport: $file_url is newer than Portfile"
                         }
                         incr count
+                    } catch {{*} eCode eMessage} {
+                        ui_debug [msgcat::mc "couldn't fetch %s for %s (%s)" $file_url $subport $eMessage]
                     }
                 }
                 if {$count == 0} {
@@ -102,15 +103,16 @@ proc portdistcheck::distcheck_main {args} {
                 foreach site $urlmap($url_var) {
                     ui_debug [format [msgcat::mc "Checking %s from %s"] $distfile $site]
                     set file_url [portfetch::assemble_url $site $distfile]
-                    if {[catch {set urlsize [eval curl getsize $curl_options {$file_url}]} error]} {
-                        ui_warn "couldn't fetch $file_url for $subport ($error)"
-                    } else {
+                    try -pass_signal {
+                        set urlsize [curl getsize {*}$curl_options $file_url]
                         incr count
                         if {$urlsize > 0} {
                             ui_info "port $subport: $distfile $urlsize bytes"
                             incr totalsize $urlsize
                             break
                         }
+                    } catch {{*} eCode eMessage} {
+                        ui_debug [msgcat::mc "couldn't fetch %s for %s (%s)" $file_url $subport $eMessage]
                     }
                 }
                 if {$count == 0} {
@@ -127,13 +129,13 @@ proc portdistcheck::distcheck_main {args} {
                 set size $totalsize
                 set humansize "${size}"
             } elseif {$totalsize < 1024*1024} {
-                set size [expr $totalsize / 1024.0]
+                set size [expr {$totalsize / 1024.0}]
                 set humansize [format "%.1fK" $size]
             } elseif {$totalsize < 1024*1024*1024} {
-                set size [expr $totalsize / (1024.0*1024.0)]
+                set size [expr {$totalsize / (1024.0*1024.0)}]
                 set humansize [format "%.1fM" $size]
             } else {
-                set size [expr $totalsize / (1024.0*1024.0*1024.0)]
+                set size [expr {$totalsize / (1024.0*1024.0*1024.0)}]
                 set humansize [format "%.1fG" $size]
             }
             ui_msg "$subport: $humansize"

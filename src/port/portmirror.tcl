@@ -1,8 +1,5 @@
-#!/bin/sh
+#!@TCLSH@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:filetype=tcl:et:sw=4:ts=4:sts=4
-# Run the Tcl interpreter \
-exec @TCLSH@ "$0" "$@"
-# portmirror.tcl
 # $Id$
 #
 # Copyright (c) 2002-2007 The MacPorts Project.
@@ -11,7 +8,6 @@ exec @TCLSH@ "$0" "$@"
 # Updates the distfiles to current distfiles by deleting old stuff.
 # Uses the database.
 
-source [file join "@macports_tcl_dir@" macports1.0 macports_fastload.tcl]
 package require macports
 package require Pextlib
 
@@ -82,7 +78,7 @@ proc print_usage args {
     puts "Usage: $argv0"
 }
 
-if {[expr $argc > 0]} {
+if {$argc > 0} {
     print_usage
     exit 1
 }

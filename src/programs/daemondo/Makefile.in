@@ -1,8 +1,9 @@
 # $Id$
 
-top_srcdir = @top_srcdir@
+srcdir     = @srcdir@
+VPATH      = @srcdir@
 
-include ${top_srcdir}/Mk/macports.autoconf.mk
+include ../../../Mk/macports.autoconf.mk
 
 datarootdir=	@datarootdir@
 mandir=		@mandir@
@@ -34,6 +35,6 @@ distclean: clean
 	rm -f Makefile
 
 install: daemondo
-	${INSTALL} -o ${DSTUSR} -g ${DSTGRP} -m 555 ${PROGRAM} ${DESTDIR}${bindir}
+	${INSTALL} -o "${DSTUSR}" -g "${DSTGRP}" -m 555 "${PROGRAM}" "${DESTDIR}${bindir}"
 
 test:

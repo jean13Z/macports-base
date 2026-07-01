@@ -131,6 +131,11 @@
 
 #include "strsed.h"
 
+/* required for strdup(3) on Linux and OS X */
+#define _XOPEN_SOURCE 600L
+/* we're using this on raw strings, no escape sequences allowed */
+#define ESCAPED_STRING
+
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>

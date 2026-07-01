@@ -1,9 +1,220 @@
 ###
 # This is a log of major user-visible changes in each MacPorts release.
-# $Id$
 ###
 
-Release 2.2.1 (unreleased)
+Release 2.4 (unreleased)
+    - Show date in verbose output of 'port installed'
+      (raimue in r146757, r152685)
+
+    - Add depends_test to handle the dependencies for the test phase of ports.
+      (khindenburg in r140488, #38208)
+
+    - Replaced the strings previously printed by "port help" with much more
+      detailed and current manpages written using asciidoc that open
+      automatically. Added documentation for almost all commands currently
+      implemented by MacPorts.
+      (raimue in branch new-help-system, merge in r123002,
+       manpages written by cal, jmr, raimue, ionic, jeremyhu,
+       #44530, #15467)
+
+    - Added macports_version to the Portfile execution context, to allow
+      checking the current MacPorts version in Portfiles.
+      (cal in r134511)
+
+    - Added "setunrequested" alias for "unsetrequested" command.
+      (ionic in r130217)
+
+    - Added interactive questions for various use cases like 'install',
+      'activate', 'uninstall --follow-dependencies'. Also added global
+      flag '-N' to provide non-interactive invocations.
+      (shasha in branch gsoc14-interactive, merge in r124243)
+
+    - Display notes for installed or updated ports at the end of the
+      installation to prevent them from getting lost in the scrolling output.
+      (#24507, cal in r118304, patch by snc)
+
+    - Handle SIGTERM and SIGINT (^C) in MacPorts to prevent inconsistencies in
+      the registry database when MacPorts is aborted during a critical
+      operation.
+      (cal in r118297 and r118298)
+
+    - Remove "support" for rpm and deb packages in MacPorts, leaving pkg/mpkg.
+      (afb in r123004)
+
+    - Remove deprecated rpm-vercomp function, ports should use vercmp instead.
+      (afb in r123005)
+
+Release 2.3.5 (2016-11-16 by raimue)
+    - Updated compiler selection for macOS 10.12 Sierra
+      (jeremyhu in r141134 and r150305)
+
+    - Do not use default archive_sites for custom ports trees
+      (raimue in r147456)
+
+    - Prune symlinks to deleted libtool archives (.la)
+      (#40935, jmr in r119571, r119594, r119595)
+
+    - Return an error livecheck matched a version older than the current
+      version.
+      (jmr, raimue in r127797, r149299)
+
+    - Permit pkg phase to be run as root, if needed for additional
+      modifications in destroot.
+      (ctreleaven in r152115)
+
+    - Ignore warnings on stderr for archive extraction to allow use of gnutar.
+      (#42492, cal in r132312)
+
+    - Create the documented porthier(7) directory structure in ${prefix}/var
+      and ${prefix}/share for destroot phase.
+      (#45434, #47688, ryandesign in r135998, r135999)
+
+    - When syncing a ports tree failed, operation could continue with the
+      wrong uid.
+      (#43202, cal in r118570)
+
+    - Change default of livecheck.ignore_sslcert to "no".
+      (#52515, raimue in r153648)
+
+    - No longer check Subversion properties in 'port lint'
+      (#48577, ryandesign in r153865)
+
+    - Fix problems with the postflight script in the installer.
+      (#43875, #43749, cal in r122042, r122044, r154073, r154110)
+
+    - Warn when the obsolete Subversion repository is used.
+      (raimue in r154451)
+
+    - port lint: warn if obsolete $Id$ keyword is used.
+      (#52757, raimue in fc45aaf)
+
+    - Support multi-valued entries in the maintainers field and allow GitHub
+      usernames as mainainers
+      (cal in 30c27d5)
+
+Release 2.3.4 (2015-10-01 by jmr)
+    - Installation will now abort when an archive is found on a server but
+      downloading it fails, rather than trying to build from source without
+      the correct dependencies (jmr in r138461)
+
+    - Re-added macports-llvm-gcc-4.2 and apple-gcc-4.2 to the compiler
+      fallback list on Yosemite now that they work (jmr in r136965)
+
+    - Changed the existsuser and existsgroup procs to return -1 on failure
+      instead of 0, since 0 is root's uid (#45737, cal in r135851)
+
+    - The MacPorts version is now available to Portfiles through a proc called
+      macports_version (cal in r134511)
+
+    - Fix failure to activate ports that install files with backslashes in
+      their names (#47283, cal in r134501, r134502)
+
+Release 2.3.3 (2014-11-21 by jmr)
+    - Fix database performance regressions with SQLite 3.8 by specifying a
+      good index for some queries (#45645, cal in r128113, r128274, r128276)
+
+Release 2.3.2 (2014-10-17 by jmr)
+    - Fix a crash in trace mode when software calls posix_spawn(2) with NULL
+      as envp (which isn't a legal thing to do from what I understand, but
+      there's software that does it) (#45318, cal in r126475)
+
+    - Tune down the noise while using trace mode; in the default verbosity
+      setting, only report files that actually exist and were hidden.
+      (cal in r124150, r124216)
+
+    - Fix bugs in trace mode that caused it to (1) not ignore /usr/local as
+      it should and (2) fail with certain lengths of $prefix.
+      (cal in r124145, r124146)
+
+    - Added a warning when a version is specified with the list action, such
+      as with installed ports (jmr in r125621)
+
+    - Added ability to set configure.compiler to gcc 5.x
+      (ryandesign in r125578)
+
+    - Fixed failure to add groups when dscl prints a warning to stderr
+      (jmr in r123652)
+
+    - Fixed incorrect handling of arguments in batch mode
+      (#44091, cal in r121485)
+
+Release 2.3.1 (2014-06-26 by jmr)
+    - Added macports-clang-3.4 to compiler fallback lists
+      (#43932, jeremyhu in r118735, r119034)
+
+    - Added quoting to PATH and MANPATH variables set by the installer, to
+      accomodate paths containing spaces (#43798, jmr in r121311)
+
+    - Update for automatic dependencies for fetch.type git, needed due to the
+      git-core port being renamed to git (#44052, ciserlohn in r120928)
+
+    - Fixed failure to sync using daily tarball (#43821, cal in r120382)
+
+Release 2.3 (2014-05-24 by jmr)
+    - Use a private copy of Tcl 8.5 for MacPorts. Starting with this change
+      features introduced with Tcl 8.5 can be used in Portfiles while still
+      keeping support for Tiger and Leopard. (cal in r117621)
+
+    - Add select --summary option. (#36179, snc in r117607)
+
+    - Display a progress indicator for slow downloads. (cal in r117044)
+
+    - Attempt to use HTTP pipelining when downloading. (cal in r117022)
+
+    - Allow ports to select a specific version of the Mac OS X SDK
+      for builds. (larryv in r116437)
+
+    - Check for Command Line Tools presence and Xcode license agreement
+      acceptance and print helpful warnings if they aren't detected. (cal in
+      r115900)
+
+    - Support using .tar.lz archives using use_lzip (mww in r114652)
+
+    - Enhance the "move" Portfile builtin to support case-only renames
+      on case-insensitive filesystems. (#41679, ryandesign in r114289)
+
+    - Fix a regression that caused problems with sandboxing when the MacPorts
+      prefix contained a symlink. (#39850, cal in r113704)
+
+    - Disable Spotlight indexing on build directories, distfiles,
+      registry, log files, archives, base source and the default ports
+      tree. (cal in r113649)
+
+    - Detect when base is running on a different platform than the one
+      it was configured for and refer user to migration instructions.
+      (raimue in r113478)
+
+    - Merge curl HTTP POST support required for MacPorts port statistics
+      developed in GSoC 2011 (jmr in r113396, original code by derek)
+
+    - In debug output, sort environment variables and print one per
+      line. (#40703, ryandesign in r113037)
+
+    - Fix incorrect lint messages when an uppercase letter is used in
+      a PortGroup name. (#40733, ryandesign in r112064)
+
+    - Add "-prepend" command for Portfile options (similar to existing
+      "-append" command). (#40655, ryandesign in r111990)
+
+    - Merge new test framework developed in GSoC 2013 (mariusc in r111325)
+
+    - Support clang's -stdlib option explicitly using configure.cxx_stdlib
+      rather than relying on its default value. This can be used to make
+      MacPorts use libc++ on OS X < 10.9. (larryv in r110519)
+
+    - Support syncing git-svn working copies. (jeremyhu in r109747)
+
+    - Remove support for mports:// and non-tarball HTTP/FTP port tree sources.
+      (cal in r109659)
+
+Release 2.2.1 (2013-10-26 by jmr)
+    - Fixed a problem where dependency calculation could sometimes fail for
+      ports that only support 32-bit architectures when the configured
+      build_arch is 64-bit and dependencies thus need to be +universal
+      (#40721, jmr in r112067)
+
+    - Fixed a potential crash in the strsed procedure (toby in r110985)
+
     - Provide choice of GCC version when compiling with DragonEgg.
       (larryv in r108040)
 

@@ -6,6 +6,10 @@
 /* Define if using the Apple Objective-C runtime and compiler. */
 #undef APPLE_RUNTIME
 
+/* Absolute path to a directory used by darwintrace to copy SIP-protected
+   files before executing */
+#undef DARWINTRACE_SIP_WORKAROUND_PATH
+
 /* Define if using the GNUstep Foundation library */
 #undef GNUSTEP_FOUNDATION
 
@@ -67,6 +71,9 @@
 /* Define to 1 if you have the `flock' function. */
 #undef HAVE_FLOCK
 
+/* Define to 1 if you have the `fls' function. */
+#undef HAVE_FLS
+
 /* Define if CoreFoundation framework is available */
 #undef HAVE_FRAMEWORK_COREFOUNDATION
 
@@ -83,14 +90,23 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
+/* Define to 1 if you have the `kevent' function. */
+#undef HAVE_KEVENT
+
 /* Define to 1 if you have the `kqueue' function. */
 #undef HAVE_KQUEUE
 
 /* Define if you have the `crypto' library (-lcrypto). */
 #undef HAVE_LIBCRYPTO
 
+/* Define to 1 if you have the <libkern/OSAtomic.h> header file. */
+#undef HAVE_LIBKERN_OSATOMIC_H
+
 /* Define if you have the `md' library (-lmd). */
 #undef HAVE_LIBMD
+
+/* Define to 1 if you have the <libproc.h> header file. */
+#undef HAVE_LIBPROC_H
 
 /* Define to 1 if you have the 'readline' library (-lreadline). */
 #undef HAVE_LIBREADLINE
@@ -125,8 +141,20 @@
 /* Define to 1 if you have the <openssl/sha.h> header file. */
 #undef HAVE_OPENSSL_SHA_H
 
+/* Define to 1 if you have the `OSAtomicCompareAndSwap32' function. */
+#undef HAVE_OSATOMICCOMPAREANDSWAP32
+
+/* Define to 1 if you have the `OSAtomicCompareAndSwap64' function. */
+#undef HAVE_OSATOMICCOMPAREANDSWAP64
+
+/* Define to 1 if you have the `OSAtomicCompareAndSwapPtr' function. */
+#undef HAVE_OSATOMICCOMPAREANDSWAPPTR
+
 /* Define to 1 if you have the <paths.h> header file. */
 #undef HAVE_PATHS_H
+
+/* Define to 1 if you have the `posix_spawn' function. */
+#undef HAVE_POSIX_SPAWN
 
 /* Define if you have POSIX threads libraries and header files. */
 #undef HAVE_PTHREAD
@@ -157,6 +185,9 @@
 
 /* Define to 1 if you have the <sha.h> header file. */
 #undef HAVE_SHA_H
+
+/* Define to 1 if you have the <spawn.h> header file. */
+#undef HAVE_SPAWN_H
 
 /* Define to 1 if you have the <sqlite3ext.h> header file. */
 #undef HAVE_SQLITE3EXT_H
@@ -226,11 +257,17 @@
 /* Define to 1 if you have <sys/wait.h> that is POSIX.1 compatible. */
 #undef HAVE_SYS_WAIT_H
 
+/* Platform supports tracemode. */
+#undef HAVE_TRACEMODE_SUPPORT
+
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
 
 /* Define to 1 if you have the <utime.h> header file. */
 #undef HAVE_UTIME_H
+
+/* Define to 1 if you have the `__getdirentries64' function. */
+#undef HAVE___GETDIRENTRIES64
 
 /* Lowest non-system-reserved GID. */
 #undef MIN_USABLE_GID

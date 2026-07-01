@@ -2,7 +2,7 @@
  * entry.c
  * $Id$
  *
- * Copyright (c) 2010-2011 The MacPorts Project
+ * Copyright (c) 2010-2011, 2014 The MacPorts Project
  * Copyright (c) 2007 Chris Pickel <sfiera@macports.org>
  * All rights reserved.
  *
@@ -31,6 +31,7 @@
 #include <config.h>
 #endif
 
+#include "portgroup.h"
 #include "entry.h"
 #include "registry.h"
 #include "sql.h"
@@ -184,11 +185,17 @@ reg_entry* reg_entry_open(reg_registry* reg, char* name, char* version,
     int lower_bound = 0;
     char* query;
     if (strlen(epoch) > 0) {
-        query = "SELECT id FROM registry.ports WHERE name=? AND version=? "
-        "AND revision=? AND variants=? AND epoch=?";
+        query = "SELECT id FROM registry.ports "
+#if SQLITE_VERSION_NUMBER >= 3006004
+                "INDEXED BY port_name "
+#endif
+                "WHERE name=? AND version=? AND revision=? AND variants=? AND epoch=?";
     } else {
-        query = "SELECT id FROM registry.ports WHERE name=? AND version=? "
-        "AND revision=? AND variants=? AND epoch!=?";
+        query = "SELECT id FROM registry.ports "
+#if SQLITE_VERSION_NUMBER >= 3006004
+                "INDEXED BY port_name "
+#endif
+                "WHERE name=? AND version=? AND revision=? AND variants=? AND epoch!=?";
     }
     if ((sqlite3_prepare_v2(reg->db, query, -1, &stmt, NULL) == SQLITE_OK)
             && (sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC)
@@ -246,9 +253,11 @@ int reg_entry_delete(reg_entry* entry, reg_error* errPtr) {
     sqlite3_stmt* ports = NULL;
     sqlite3_stmt* files = NULL;
     sqlite3_stmt* dependencies = NULL;
+    sqlite3_stmt* portgroups = NULL;
     char* ports_query = "DELETE FROM registry.ports WHERE id=?";
     char* files_query = "DELETE FROM registry.files WHERE id=?";
     char* dependencies_query = "DELETE FROM registry.dependencies WHERE id=?";
+    char* portgroups_query = "DELETE FROM registry.portgroups WHERE id=?";
     if ((sqlite3_prepare_v2(reg->db, ports_query, -1, &ports, NULL) == SQLITE_OK)
             && (sqlite3_bind_int64(ports, 1, entry->id) == SQLITE_OK)
             && (sqlite3_prepare_v2(reg->db, files_query, -1, &files, NULL)
@@ -256,7 +265,10 @@ int reg_entry_delete(reg_entry* entry, reg_error* errPtr) {
             && (sqlite3_bind_int64(files, 1, entry->id) == SQLITE_OK)
             && (sqlite3_prepare_v2(reg->db, dependencies_query, -1, &dependencies,
                     NULL) == SQLITE_OK)
-            && (sqlite3_bind_int64(dependencies, 1, entry->id) == SQLITE_OK)) {
+            && (sqlite3_bind_int64(dependencies, 1, entry->id) == SQLITE_OK)
+            && (sqlite3_prepare_v2(reg->db, portgroups_query, -1, &portgroups,
+                    NULL) == SQLITE_OK)
+            && (sqlite3_bind_int64(portgroups, 1, entry->id) == SQLITE_OK)) {
         int r;
         do {
             r = sqlite3_step(ports);
@@ -271,7 +283,20 @@ int reg_entry_delete(reg_entry* entry, reg_error* errPtr) {
                                         r = sqlite3_step(dependencies);
                                         switch (r) {
                                             case SQLITE_DONE:
-                                                result = 1;
+                                                do {
+                                                    r = sqlite3_step(portgroups);
+                                                    switch (r) {
+                                                        case SQLITE_DONE:
+                                                            result = 1;
+                                                            break;
+                                                        case SQLITE_BUSY:
+                                                            break;
+                                                        case SQLITE_ERROR:
+                                                            reg_sqlite_error(reg->db,
+                                                                    errPtr, NULL);
+                                                            break;
+                                                    }
+                                                } while (r == SQLITE_BUSY);
                                                 break;
                                             case SQLITE_BUSY:
                                                 break;
@@ -314,6 +339,9 @@ int reg_entry_delete(reg_entry* entry, reg_error* errPtr) {
     }
     if (dependencies) {
         sqlite3_finalize(dependencies);
+    }
+    if (portgroups) {
+        sqlite3_finalize(portgroups);
     }
     return result;
 }
@@ -472,7 +500,11 @@ int reg_entry_installed(reg_registry* reg, char* name, reg_entry*** entries,
     if (name == NULL) {
         format = "%s WHERE state='installed'";
     } else {
-        format = "%s WHERE state='installed' AND name='%q'";
+        format = "%s "
+#if SQLITE_VERSION_NUMBER >= 3006004
+                "INDEXED BY port_name "
+#endif
+                "WHERE state='installed' AND name='%q'";
     }
     query = sqlite3_mprintf(format, select, name);
     result = reg_all_entries(reg, query, -1, entries, errPtr);
@@ -670,6 +702,73 @@ int reg_entry_propset(reg_entry* entry, char* key, char* value,
 }
 
 /**
+ * Associates a portgroup with given port.
+ *
+ * @param [in] entry      the entry to map the portgroup to
+ * @param [in] name       the portgroup name (e.g. "muniversal")
+ * @param [in] version    the portgroup version (e.g. "1.0")
+ * @param [in] sha256     the sha256 hash of the portgroup file
+ * @param [in] size       the size of the portgroup file in bytes
+ * @param [out] errPtr    on error, a description of the error that occurred
+ * @return                true if success; false if failure
+ */
+int reg_entry_addgroup(reg_entry* entry, char* name, char *version,
+        char *sha256, sqlite_int64 size, reg_error* errPtr) {
+    reg_registry* reg = entry->reg;
+    int result = 1;
+    sqlite3_stmt* stmt = NULL;
+    char* insert = "INSERT INTO registry.portgroups (id, name, version, size, sha256) "
+        "VALUES (?, ?, ?, ?, ?)";
+    if ((sqlite3_prepare_v2(reg->db, insert, -1, &stmt, NULL) == SQLITE_OK)
+            && (sqlite3_bind_int64(stmt, 1, entry->id) == SQLITE_OK)
+            && (sqlite3_bind_text(stmt, 2, name, -1, SQLITE_STATIC) == SQLITE_OK)
+            && (sqlite3_bind_text(stmt, 3, version, -1, SQLITE_STATIC) == SQLITE_OK)
+            && (sqlite3_bind_int64(stmt, 4, size) == SQLITE_OK)
+            && (sqlite3_bind_text(stmt, 5, sha256, -1, SQLITE_STATIC) == SQLITE_OK)) {
+        int r;
+        do {
+            r = sqlite3_step(stmt);
+            switch (r) {
+                case SQLITE_DONE:
+                    sqlite3_reset(stmt);
+                    break;
+                case SQLITE_BUSY:
+                    break;
+                default:
+                    reg_sqlite_error(reg->db, errPtr, insert);
+                    result = 0;
+                    break;
+            }
+        } while (r == SQLITE_BUSY);
+    } else {
+        reg_sqlite_error(reg->db, errPtr, insert);
+        result = 0;
+    }
+    if (stmt) {
+        sqlite3_finalize(stmt);
+    }
+    return result;
+}
+
+/**
+ * Gets a list of portgroups that are used by this port.
+ *
+ * @param [in] entry       a port
+ * @param [out] portgroups a list of portgroups used by the given port
+ * @param [out] errPtr     on error, a description of the error that occurred
+ * @return                 true if success; false if failure
+ */
+int reg_entry_getgroups(reg_entry* entry, reg_portgroup*** portgroups, reg_error* errPtr) {
+    reg_registry* reg = entry->reg;
+    char* query = sqlite3_mprintf("SELECT ROWID FROM portgroups "
+            "WHERE id=%lld",
+            entry->id);
+    int result = reg_all_portgroups(reg, query, -1, portgroups, errPtr);
+    sqlite3_free(query);
+    return result;
+}
+
+/**
  * Maps files to the given port in the filemap. The list of files must not
  * contain files that are already mapped to the given port.
  *
@@ -684,8 +783,8 @@ int reg_entry_map(reg_entry* entry, char** files, int file_count,
     reg_registry* reg = entry->reg;
     int result = 1;
     sqlite3_stmt* stmt = NULL;
-    char* insert = "INSERT INTO registry.files (id, path, mtime, active) "
-        "VALUES (?, ?, 0, 0)";
+    char* insert = "INSERT INTO registry.files (id, path, active) "
+        "VALUES (?, ?, 0)";
     if ((sqlite3_prepare_v2(reg->db, insert, -1, &stmt, NULL) == SQLITE_OK)
             && (sqlite3_bind_int64(stmt, 1, entry->id) == SQLITE_OK)) {
         int i;
@@ -737,7 +836,11 @@ int reg_entry_unmap(reg_entry* entry, char** files, int file_count,
     reg_registry* reg = entry->reg;
     int result = 1;
     sqlite3_stmt* stmt = NULL;
-    char* query = "DELETE FROM registry.files WHERE path=? AND id=?";
+    char* query = "DELETE FROM registry.files "
+#if SQLITE_VERSION_NUMBER >= 3006004
+                  "INDEXED BY file_path "
+#endif
+                  "WHERE path=? AND id=?";
     if ((sqlite3_prepare_v2(reg->db, query, -1, &stmt, NULL) == SQLITE_OK)
             && (sqlite3_bind_int64(stmt, 2, entry->id) == SQLITE_OK)) {
         int i;
@@ -938,8 +1041,16 @@ int reg_entry_activate(reg_entry* entry, char** files, char** as_files,
     sqlite3_stmt* update = NULL;
     char* select_query = "SELECT id FROM registry.files WHERE actual_path=? "
         "AND active";
-    char* update_query = "UPDATE registry.files SET actual_path=?, active=1 "
-        "WHERE path=? AND id=?";
+    char* update_query = "UPDATE registry.files "
+#if SQLITE_VERSION_NUMBER >= 3006004
+        /* if the version of SQLite supports it force the usage of the index on
+         * path, rather than the one on id which has a lot less discriminative
+         * power and leads to very slow queries. This is needed for the new
+         * query planner introduced in 3.8.0 which would not use the correct
+         * index automatically. */
+        "INDEXED BY file_path "
+#endif
+        "SET actual_path=?, active=1 WHERE path=? AND id=?";
 
     /* if as_files wasn't specified, activate as the original files */
     if (as_files == NULL) {
@@ -1037,7 +1148,16 @@ int reg_entry_deactivate(reg_entry* entry, char** files, int file_count,
     int result = 1;
     int i;
     sqlite3_stmt* stmt = NULL;
-    char* query = "UPDATE registry.files SET active=0 WHERE actual_path=? AND id=?";
+    char* query = "UPDATE registry.files "
+#if SQLITE_VERSION_NUMBER >= 3006004
+        /* if the version of SQLite supports it force the usage of the index on
+         * path, rather than the one on id which has a lot less discriminative
+         * power and leads to very slow queries. This is needed for the new
+         * query planner introduced in 3.8.0 which would not use the correct
+         * index automatically. */
+        "INDEXED BY file_actual "
+#endif
+        "SET active=0 WHERE actual_path=? AND id=?";
     if ((sqlite3_prepare_v2(reg->db, query, -1, &stmt, NULL) == SQLITE_OK)
             && (sqlite3_bind_int64(stmt, 2, entry->id) == SQLITE_OK)) {
         for (i=0; i<file_count && result; i++) {
@@ -1179,7 +1299,7 @@ int reg_all_open_entries(reg_registry* reg, reg_entry*** entries) {
     int entry_space = 10;
     Tcl_HashEntry* hash;
     Tcl_HashSearch search;
-    *entries = malloc(10*sizeof(void*));
+    *entries = malloc(entry_space * sizeof(reg_entry*));
     if (!*entries) {
         return -1;
     }

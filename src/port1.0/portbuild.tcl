@@ -69,12 +69,12 @@ proc portbuild::add_automatic_buildsystem_dependencies {} {
     if {!${build.type.add_deps}} {
         return
     }
-    if {[option build.type] == "bsd" && [option os.platform] == "darwin"} {
+    if {[option build.type] eq "bsd" && [option os.platform] eq "darwin"} {
         ui_debug "build.type is BSD, adding bin:bsdmake:bsdmake build dependency"
         depends_build-delete bin:bsdmake:bsdmake
         depends_build-append bin:bsdmake:bsdmake
     }
-    if {[option build.type] == "gnu" && [option os.platform] == "freebsd"} {
+    if {[option build.type] eq "gnu" && [option os.platform] eq "freebsd"} {
         ui_debug "build.type is GNU, adding bin:gmake:gmake build dependency"
         depends_build-delete bin:gmake:gmake
         depends_build-append bin:gmake:gmake
@@ -87,23 +87,23 @@ options build.type.add_deps
 default build.type.add_deps yes
 
 proc portbuild::build_getmaketype {args} {
-    if {[option build.type] == "default"} {
+    if {[option build.type] eq "default"} {
         return [findBinary make $portutil::autoconf::make_path]
     }
     switch -exact -- [option build.type] {
         bsd {
-            if {[option os.platform] == "darwin"} {
+            if {[option os.platform] eq "darwin"} {
                 return [findBinary bsdmake $portutil::autoconf::bsdmake_path]
-            } elseif {[option os.platform] == "freebsd"} {
+            } elseif {[option os.platform] eq "freebsd"} {
                 return [findBinary make $portutil::autoconf::make_path]
             } else {
                 return [findBinary pmake $portutil::autoconf::bsdmake_path]
             }
         }
         gnu {
-            if {[option os.platform] == "darwin"} {
+            if {[option os.platform] eq "darwin"} {
                 return [findBinary gnumake $portutil::autoconf::gnumake_path]
-            } elseif {[option os.platform] == "linux"} {
+            } elseif {[option os.platform] eq "linux"} {
                 return [findBinary make $portutil::autoconf::make_path]
             } else {
                 return [findBinary gmake $portutil::autoconf::gnumake_path]
@@ -111,12 +111,12 @@ proc portbuild::build_getmaketype {args} {
         }
         pbx -
         xcode {
-            if {[option os.platform] != "darwin"} {
+            if {[option os.platform] ne "darwin"} {
                 return -code error "[format [msgcat::mc "This port requires 'xcodebuild', which is not available on %s."] [option os.platform]]"
             }
 
             global xcodebuildcmd
-            if {$xcodebuildcmd != "none"} {
+            if {$xcodebuildcmd ne "none"} {
                 return $xcodebuildcmd
             } else {
                 return -code error "xcodebuild was not found on this system!"
@@ -134,14 +134,20 @@ proc portbuild::build_getjobs {args} {
     set jobs $buildmakejobs
     # if set to '0', use the number of cores for the number of jobs
     if {$jobs == 0} {
-        if {[catch {set jobs [sysctl hw.activecpu]}] || [catch {set memsize [sysctl hw.memsize]}]} {
-            set jobs 2
+        try -pass_signal {
+            set jobs [sysctl hw.activecpu]
+        } catch {{*} eCode eMessage} {
             ui_warn "failed to determine the number of available CPUs (probably not supported on this platform)"
             ui_warn "defaulting to $jobs jobs, consider setting buildmakejobs to a nonzero value in macports.conf"
+            set jobs 2
         }
-        if {[info exists memsize] && $jobs > $memsize / 1000000000 + 1} {
-            set jobs [expr $memsize / 1000000000 + 1]
-        }
+
+        try -pass_signal {
+            set memsize [sysctl hw.memsize]
+            if {$jobs > $memsize / (1024 * 1024 * 1024) + 1} {
+                set jobs [expr {$memsize / (1024 * 1024 * 1024) + 1}]
+            }
+        } catch {*} {}
     }
     if {![string is integer -strict $jobs] || $jobs <= 1} {
         set jobs 1
@@ -150,8 +156,8 @@ proc portbuild::build_getjobs {args} {
 }
 
 proc portbuild::build_getargs {args} {
-    if {(([option build.type] == "default" && [option os.platform] != "freebsd") || \
-         ([option build.type] == "gnu")) \
+    if {(([option build.type] eq "default" && [option os.platform] ne "freebsd") || \
+         ([option build.type] eq "gnu")) \
         && [regexp "^(/\\S+/|)(g|gnu|)make(\\s+.*|)$" [option build.cmd]]} {
         # Print "Entering directory" lines for better log debugging
         return "-w [option build.target]"

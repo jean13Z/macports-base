@@ -3,7 +3,7 @@
  * $Id$
  *
  * Copyright (c) 2007 Chris Pickel <sfiera@macports.org>
- * Copyright (c) 2012 The MacPorts Project
+ * Copyright (c) 2012, 2014 The MacPorts Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,7 @@
 #include <tcl.h>
 
 #include <cregistry/registry.h>
+#include <cregistry/portgroup.h>
 #include <cregistry/entry.h>
 #include <cregistry/file.h>
 
@@ -46,6 +47,7 @@
 #include "file.h"
 #include "graph.h"
 #include "item.h"
+#include "portgroup.h"
 #include "registry.h"
 #include "util.h"
 
@@ -320,6 +322,57 @@ static int registry_write(ClientData clientData UNUSED, Tcl_Interp* interp,
     }
 }
 
+/*
+ * registry::metadata cmd ?arg ...?
+ *
+ * Commands manipulating metadata in the registry. This can be called `registry::metadata`
+ */
+int metadata_cmd(ClientData clientData UNUSED, Tcl_Interp* interp, int objc,
+        Tcl_Obj* CONST objv[]) {
+    if (objc < 3) {
+        Tcl_WrongNumArgs(interp, 1, objv, "cmd key ?value?");
+        return TCL_ERROR;
+    }
+    reg_registry* reg = registry_for(interp, reg_attached);
+    if (reg == NULL) {
+        return TCL_ERROR;
+    }
+    const char *cmdstring = Tcl_GetString(objv[1]);
+    reg_error error;
+    if (strcmp(cmdstring, "get") == 0) {
+        char *data;
+        if (reg_get_metadata(reg, Tcl_GetString(objv[2]), &data, &error)) {
+            Tcl_Obj* result = Tcl_NewStringObj(data, -1);
+            Tcl_SetObjResult(interp, result);
+            free(data);
+            return TCL_OK;
+        } else if (error.code == REG_NOT_FOUND) {
+            Tcl_Obj* result = Tcl_NewIntObj(-1);
+            Tcl_SetObjResult(interp, result);
+            return TCL_OK;
+        } else {
+            return registry_failed(interp, &error);
+        }
+    } else if (strcmp(cmdstring, "set") == 0) {
+        if (objc < 4) {
+            Tcl_WrongNumArgs(interp, 1, objv, "set key value");
+            return TCL_ERROR;
+        }
+        if (reg_set_metadata(reg, Tcl_GetString(objv[2]), Tcl_GetString(objv[3]), &error)) {
+            return TCL_OK;
+        } else {
+            return registry_failed(interp, &error);
+        }
+    } else if (strcmp(cmdstring, "del") == 0) {
+        if (reg_del_metadata(reg, Tcl_GetString(objv[2]), &error)) {
+            return TCL_OK;
+        } else {
+            return registry_failed(interp, &error);
+        }
+    }
+    return TCL_ERROR;
+}
+
 /**
  * Initializer for the registry lib.
  *
@@ -338,6 +391,8 @@ int Registry_Init(Tcl_Interp* interp) {
     /* Tcl_CreateObjCommand(interp, "registry::item", item_cmd, NULL, NULL); */
     Tcl_CreateObjCommand(interp, "registry::entry", entry_cmd, NULL, NULL);
     Tcl_CreateObjCommand(interp, "registry::file", file_cmd, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "registry::portgroup", portgroup_cmd, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "registry::metadata", metadata_cmd, NULL, NULL);
     if (Tcl_PkgProvide(interp, "registry2", "2.0") != TCL_OK) {
         return TCL_ERROR;
     }

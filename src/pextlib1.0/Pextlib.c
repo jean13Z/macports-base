@@ -33,9 +33,18 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if HAVE_CONFIG_H
+#ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+
+/* required for strdup(3) on Linux and OS X */
+#define _XOPEN_SOURCE 600L
+/* required for clearenv(3)/setenv(3)/unsetenv(3) on Linux */
+#define _BSD_SOURCE
+/* required for clearenv(3)/setenv(3)/unsetenv(3) on OS X */
+#define _DARWIN_C_SOURCE
+/* required for vasprintf(3) on Linux */
+#define _GNU_SOURCE
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -82,7 +91,7 @@
 #include "strsed.h"
 #include "readdir.h"
 #include "pipe.h"
-#include "flock.h"
+#include "adv-flock.h"
 #include "system.h"
 #include "mktemp.h"
 #include "realpath.h"
@@ -94,76 +103,84 @@
 extern char **environ;
 #endif
 
-#if !HAVE_SETMODE
+#ifndef HAVE_SETMODE
 #include "setmode.h"
 #endif
 
-static char *
-ui_escape(const char *source)
-{
-    char *d, *dest;
-    const char *s;
-    size_t dlen;
+__attribute__((format(printf, 3, 0)))
+static void ui_message(Tcl_Interp *interp, const char *severity, const char *format, va_list va) {
+    char *tclcmd;
+    char *buf;
 
-    s = source;
-    dlen = strlen(source) * 2 + 1;
-    d = dest = malloc(dlen);
-    if (dest == NULL) {
-        return NULL;
+    if (vasprintf(&buf, format, va) < 0) {
+        perror("vasprintf");
+        return;
     }
-    while(*s != '\0') {
-        switch(*s) {
-            case '\\':
-            case '}':
-            case '{':
-                *d = '\\';
-                d++;
-                *d = *s;
-                d++;
-                s++;
-                break;
-            case '\n':
-                s++;
-                break;
-            default:
-                *d = *s;
-                d++;
-                s++;
-                break;
-        }
+    if (asprintf(&tclcmd, "ui_%s $warn", severity) < 0) {
+        perror("asprintf");
+        free(buf);
+        return;
     }
-    *d = '\0';
-    return dest;
+
+    Tcl_SetVar(interp, "warn", buf, 0);
+    if (TCL_OK != Tcl_EvalEx(interp, tclcmd, -1, 0)) {
+        fprintf(stderr, "Error evaluating Tcl statement '%s': %s (message: '%s')\n", tclcmd, Tcl_GetStringResult(interp), buf);
+    }
+    Tcl_UnsetVar(interp, "warn", 0);
+    free(buf);
+    free(tclcmd);
 }
 
-int
-ui_info(Tcl_Interp *interp, char *mesg)
-{
-    const char ui_proc_start[] = "ui_info [subst -nocommands -novariables {";
-    const char ui_proc_end[] = "}]";
-    char *script, *string;
-    size_t scriptlen, len, remaining;
-    int rval;
+__attribute__((format(printf, 2, 3)))
+void ui_error(Tcl_Interp *interp, const char *format, ...) {
+    va_list va;
+    va_start(va, format);
+    ui_message(interp, "error", format, va);
+    va_end(va);
+}
 
-    string = ui_escape(mesg);
-    if (string == NULL)
-        return TCL_ERROR;
+__attribute__((format(printf, 2, 3)))
+void ui_warn(Tcl_Interp *interp, const char *format, ...) {
+    va_list va;
 
-    len = strlen(string);
-    scriptlen = sizeof(ui_proc_start) + len + sizeof(ui_proc_end) - 1;
-    script = malloc(scriptlen);
-    if (script == NULL)
-        return TCL_ERROR;
+    va_start(va, format);
+    ui_message(interp, "warn", format, va);
+    va_end(va);
+}
 
-    memcpy(script, ui_proc_start, sizeof(ui_proc_start));
-    remaining = scriptlen - sizeof(ui_proc_start);
-    strncat(script, string, remaining);
-    remaining -= len;
-    strncat(script, ui_proc_end, remaining);
-    free(string);
-    rval = Tcl_EvalEx(interp, script, -1, 0);
-    free(script);
-    return rval;
+__attribute__((format(printf, 2, 3)))
+void ui_msg(Tcl_Interp *interp, const char *format, ...) {
+    va_list va;
+    va_start(va, format);
+    ui_message(interp, "msg", format, va);
+    va_end(va);
+}
+
+__attribute__((format(printf, 2, 3)))
+void ui_notice(Tcl_Interp *interp, const char *format, ...) {
+    va_list va;
+
+    va_start(va, format);
+    ui_message(interp, "notice", format, va);
+    va_end(va);
+}
+
+__attribute__((format(printf, 2, 3)))
+void ui_info(Tcl_Interp *interp, const char *format, ...) {
+    va_list va;
+
+    va_start(va, format);
+    ui_message(interp, "info", format, va);
+    va_end(va);
+}
+
+__attribute__((format(printf, 2, 3)))
+void ui_debug(Tcl_Interp *interp, const char *format, ...) {
+    va_list va;
+
+    va_start(va, format);
+    ui_message(interp, "debug", format, va);
+    va_end(va);
 }
 
 int StrsedCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
@@ -194,24 +211,25 @@ int ExistsuserCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tc
 {
     Tcl_Obj *tcl_result;
     struct passwd *pwent;
-    char *user;
+    const char *user;
 
     if (objc != 2) {
         Tcl_WrongNumArgs(interp, 1, objv, "user");
         return TCL_ERROR;
     }
 
-    user = strdup(Tcl_GetString(objv[1]));
-    if (isdigit(*(user)))
-        pwent = getpwuid(strtol(user, 0, 0));
-    else
+    user = Tcl_GetString(objv[1]);
+    if (isdigit(*user)) {
+        pwent = getpwuid((uid_t) strtol(user, 0, 0));
+    } else {
         pwent = getpwnam(user);
-    free(user);
+    }
 
-    if (pwent == NULL)
-        tcl_result = Tcl_NewIntObj(0);
-    else
+    if (pwent == NULL) {
+        tcl_result = Tcl_NewIntObj(-1);
+    } else {
         tcl_result = Tcl_NewIntObj(pwent->pw_uid);
+    }
 
     Tcl_SetObjResult(interp, tcl_result);
     return TCL_OK;
@@ -221,24 +239,25 @@ int ExistsgroupCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, T
 {
     Tcl_Obj *tcl_result;
     struct group *grent;
-    char *group;
+    const char *group;
 
     if (objc != 2) {
         Tcl_WrongNumArgs(interp, 1, objv, "groupname");
         return TCL_ERROR;
     }
 
-    group = strdup(Tcl_GetString(objv[1]));
-    if (isdigit(*(group)))
-        grent = getgrgid(strtol(group, 0, 0));
-    else
+    group = Tcl_GetString(objv[1]);
+    if (isdigit(*group)) {
+        grent = getgrgid((gid_t) strtol(group, 0, 0));
+    } else {
         grent = getgrnam(group);
-    free(group);
+    }
 
-    if (grent == NULL)
-        tcl_result = Tcl_NewIntObj(0);
-    else
+    if (grent == NULL) {
+        tcl_result = Tcl_NewIntObj(-1);
+    } else {
         tcl_result = Tcl_NewIntObj(grent->gr_gid);
+    }
 
     Tcl_SetObjResult(interp, tcl_result);
     return TCL_OK;
@@ -254,7 +273,7 @@ int NextuidCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc UNUSED
 
     cur = MIN_USABLE_UID;
 
-    while (getpwuid(cur) != NULL) {
+    while (getpwuid((uid_t)cur) != NULL) {
         cur++;
     }
 
@@ -271,7 +290,7 @@ int NextgidCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc UNUSED
 
     cur = MIN_USABLE_GID;
 
-    while (getgrgid(cur) != NULL) {
+    while (getgrgid((gid_t)cur) != NULL) {
         cur++;
     }
 
@@ -361,13 +380,6 @@ int CreateSymlinkCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc,
 int UnsetEnvCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
 {
     char *name;
-    char **envp;
-    char *equals;
-    size_t len;
-    Tcl_Obj *tclList;
-    int listLength;
-    Tcl_Obj **listArray;
-    int loopCounter;
 
     if (objc != 2) {
         Tcl_WrongNumArgs(interp, 1, objv, "name");
@@ -386,18 +398,21 @@ int UnsetEnvCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_
            clearenv() but that is not yet standardized, instead use Tcl's
            list capability to easily build an array of strings for each
            env name, then loop through that list to unsetenv() each one */
-        tclList = Tcl_NewListObj( 0, NULL );
+        Tcl_Obj *tclList = Tcl_NewListObj( 0, NULL );
         Tcl_IncrRefCount( tclList );
         /* unset all current environment variables */
-        for (envp = environ; *envp != NULL; envp++) {
-            equals = strchr(*envp, '=');
+        for (char **envp = environ; *envp != NULL; envp++) {
+            char *equals = strchr(*envp, '=');
             if (equals != NULL) {
-                len = equals - *envp;
+				size_t len = (size_t)(equals - *envp);
                 Tcl_ListObjAppendElement(interp, tclList, Tcl_NewStringObj(*envp, len));
             }
         }
+
+		int listLength;
+		Tcl_Obj **listArray;
         Tcl_ListObjGetElements(interp, tclList, &listLength, &listArray);
-        for (loopCounter = 0; loopCounter < listLength; loopCounter++) {
+        for (int loopCounter = 0; loopCounter < listLength; loopCounter++) {
             unsetenv(Tcl_GetString(listArray[loopCounter]));
         }
         Tcl_DecrRefCount( tclList );
@@ -603,7 +618,7 @@ int Pextlib_Init(Tcl_Interp *interp)
         return TCL_ERROR;
 
 	Tcl_CreateObjCommand(interp, "system", SystemCmd, NULL, NULL);
-	Tcl_CreateObjCommand(interp, "flock", FlockCmd, NULL, NULL);
+	Tcl_CreateObjCommand(interp, "adv-flock", AdvFlockCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "readdir", ReaddirCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "strsed", StrsedCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "mkstemp", MkstempCmd, NULL, NULL);
@@ -617,10 +632,6 @@ int Pextlib_Init(Tcl_Interp *interp)
 	Tcl_CreateObjCommand(interp, "xinstall", InstallCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "fs-traverse", FsTraverseCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "filemap", FilemapCmd, NULL, NULL);
-#if 1
-	/* the name "rpm-vercomp" is deprecated, use "vercmp" instead */
-	Tcl_CreateObjCommand(interp, "rpm-vercomp", VercompCmd, NULL, NULL);
-#endif
 	Tcl_CreateObjCommand(interp, "vercmp", VercompCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "rmd160", RMD160Cmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "sha256", SHA256Cmd, NULL, NULL);
@@ -649,6 +660,7 @@ int Pextlib_Init(Tcl_Interp *interp)
     Tcl_CreateObjCommand(interp, "seteuid", seteuidCmd, NULL, NULL);
     Tcl_CreateObjCommand(interp, "setgid", setgidCmd, NULL, NULL);
     Tcl_CreateObjCommand(interp, "setegid", setegidCmd, NULL, NULL);
+    Tcl_CreateObjCommand(interp, "getpwuid", getpwuidCmd, NULL, NULL);
     Tcl_CreateObjCommand(interp, "name_to_uid", name_to_uidCmd, NULL, NULL);
     Tcl_CreateObjCommand(interp, "uid_to_name", uid_to_nameCmd, NULL, NULL);
     Tcl_CreateObjCommand(interp, "uname_to_gid", uname_to_gidCmd, NULL, NULL);

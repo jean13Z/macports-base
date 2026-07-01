@@ -1,6 +1,33 @@
-# et:ts=4
-# portlint.tcl
+# -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:filetype=tcl:et:sw=4:ts=4:sts=4
 # $Id$
+#
+# Copyright (c) 2007 - 2014 The MacPorts Project
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. Neither the name of The MacPorts Project nor the names of its contributors
+#    may be used to endorse or promote products derived from this software
+#    without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+#
 
 package provide portlint 1.0
 package require portutil 1.0
@@ -53,6 +80,7 @@ set lint_optional [list \
     "distname" \
     "use_automake" \
     "use_autoconf" \
+    "use_autoreconf" \
     "use_configure" \
     ]
 
@@ -138,7 +166,7 @@ proc portlint::lint_main {args} {
             if {$nitpick} {
                 seek $f -1 end
                 set last [read $f 1]
-                if {![string match "\n" $last]} {
+                if {"\n" ne $last} {
                     ui_warn "Line $lineno has missing newline (at end of file)"
                     incr warnings
                 }
@@ -153,12 +181,12 @@ proc portlint::lint_main {args} {
             incr errors
         }
 
-        if {($require_after == "PortSystem" || $require_after == "PortGroup") && \
+        if {($require_after eq "PortSystem" || $require_after eq "PortGroup") && \
             [string match "PortGroup*" $line]} {
             set require_blank false
         }
 
-        if {$nitpick && $require_blank && ($line != "")} {
+        if {$nitpick && $require_blank && ($line ne "")} {
             ui_warn "Line $lineno should be a newline (after $require_after)"
             incr warnings
         }
@@ -174,13 +202,10 @@ proc portlint::lint_main {args} {
             ui_info "OK: Line $lineno has emacs/vim Mode"
             incr topline_number
         }
-        if {($lineno == $topline_number) && ![string match "*\$Id*\$" $line]} {
-            ui_warn "Line $lineno is missing RCS tag (\$Id\$)"
+
+        if {[string match "*\$Id*\$" $line]} {
+            ui_warn "Line $lineno is using obsolete RCS tag (\$Id\$)"
             incr warnings
-        } elseif {($lineno == $topline_number)} {
-            ui_info "OK: Line $lineno has RCS tag (\$Id\$)"
-            set require_blank true
-            set require_after "RCS tag"
         }
         
         # skip the rest for comment lines (not perfectly accurate...)
@@ -204,7 +229,7 @@ proc portlint::lint_main {args} {
             set require_after "PortSystem"
         }
         if {[string match "PortGroup*" $line]} {
-            regexp {PortGroup\s+([a-z0-9_]+)\s+([0-9.]+)} $line -> portgroup portgroupversion
+            regexp {PortGroup\s+([A-Za-z0-9_]+)\s+([0-9.]+)} $line -> portgroup portgroupversion
             if {![info exists portgroup]} {
                 ui_error "Line $lineno has unrecognized PortGroup"
                 incr errors
@@ -228,7 +253,7 @@ proc portlint::lint_main {args} {
         if {[string match "long_description*" $line]} {
             set in_description true
         }
-        if {$in_description && ([string range $line end end] != "\\")} {
+        if {$in_description && ([string range $line end end] ne "\\")} {
             set in_description false
             #set require_blank true
             #set require_after "long_description"
@@ -245,7 +270,7 @@ proc portlint::lint_main {args} {
         
         if {[string match "platform\[ \t\]*" $line]} {
             regexp {platform\s+(?:\w+\s+(?:\w+\s+)?)?(\w+)} $line -> platform_arch
-            if {$platform_arch == "ppc"} {
+            if {$platform_arch eq "ppc"} {
                 ui_error "Arch 'ppc' in platform on line $lineno should be 'powerpc'"
                 incr errors
             }
@@ -261,6 +286,19 @@ proc portlint::lint_main {args} {
             incr warnings
         }
 
+        if {[regexp {compiler\.blacklist(?:-[a-z]+)?\s.*(["{]\S+(?:\s+\S+){2,}["}])} $line -> blacklist] && ![info exists portgroups(compiler_blacklist_versions)]} {
+            ui_error "Line $lineno uses compiler.blacklist entry $blacklist which requires the compiler_blacklist_versions portgroup which has not been included"
+            incr errors
+        }
+
+        if {[regexp {(^.*)(\meval\s+)(.*)(\[glob\M)(.*$)} $line -> match_before match_eval match_between match_glob match_after]} {
+            ui_warn "Line $lineno should use the expansion operator instead of the eval procedure. Change"
+            ui_warn "$line"
+            ui_warn "to"
+            ui_warn "$match_before$match_between{*}$match_glob$match_after"
+            incr warnings
+        }
+
         # Check for hardcoded version numbers
         if {$nitpick} {
             # Support for skipping checksums lines
@@ -271,7 +309,8 @@ proc portlint::lint_main {args} {
     
             if {!$hashline
                     && ![regexp {^\s*PortSystem|^\s*PortGroup|^\s*version} $line]
-                    && ![regexp {^\s*[a-z0-9]+\.setup} $line]
+                    && ![regexp {^\s*[A-Za-z0-9_]+\.setup} $line]
+                    && ![regexp {^\s*license} $line]
                     && [string first [option version] $line] != -1} {
                 ui_warn "Line $lineno seems to hardcode the version number, consider using \${version} instead"
                 incr warnings
@@ -284,7 +323,17 @@ proc portlint::lint_main {args} {
                     set hashline false
             }
         }
-            
+
+        # Check for hardcoded paths
+        if {!$hashline
+                && $name ne "MacPorts"
+                && [string match "*/opt/local*" $line]
+                && ![regexp {^\s*reinplace} $line]
+                && ![regexp {^\s*system.*\Wsed\W} $line]} {
+            ui_error "Line $lineno hardcodes /opt/local, use \${prefix} instead"
+            incr errors
+        }
+
         ### TODO: more checks to Portfile syntax
 
         incr lineno
@@ -295,9 +344,9 @@ proc portlint::lint_main {args} {
     global os.platform os.arch os.version version revision epoch \
            description long_description platforms categories all_variants \
            maintainers license homepage master_sites checksums patchfiles \
-           depends_fetch depends_extract depends_lib depends_build \
-           depends_run distfiles fetch.type lint_portsystem lint_platforms \
-           lint_required lint_optional
+           depends_fetch depends_extract depends_lib depends_build depends_run \
+           depends_test distfiles fetch.type lint_portsystem lint_platforms \
+           lint_required lint_optional replaced_by conflicts
     set portarch [get_canonical_archs]
 
     if (!$seen_portsystem) {
@@ -324,7 +373,7 @@ proc portlint::lint_main {args} {
 
     foreach req_var $lint_required {
 
-        if {$req_var == "master_sites"} {
+        if {$req_var eq "master_sites"} {
             if {${fetch.type} != "standard"} {
                 ui_info "OK: $req_var not required for fetch.type ${fetch.type}"
                 continue
@@ -359,7 +408,7 @@ proc portlint::lint_main {args} {
 
     if {[info exists platforms]} {
         foreach platform $platforms {
-            if {[lsearch -exact $lint_platforms $platform] == -1} {
+            if {$platform ni $lint_platforms} {
                 ui_error "Unknown platform: $platform"
                 incr errors
             } else {
@@ -391,7 +440,7 @@ proc portlint::lint_main {args} {
     foreach variant $all_variants {
         set variantname [ditem_key $variant name] 
         set variantdesc [lindex [ditem_key $variant description] 0]
-        if {![info exists variantname] || $variantname == ""} {
+        if {![info exists variantname] || $variantname eq ""} {
             ui_error "Variant number $variantnumber does not have a name"
             incr errors
         } else {
@@ -404,18 +453,18 @@ proc portlint::lint_main {args} {
                 set name_ok false
             }
 
-            if {![info exists variantdesc] || $variantdesc == ""} {
+            if {![info exists variantdesc] || $variantdesc eq ""} {
                 # don't warn about missing descriptions for global variants
-                if {[lsearch -exact $local_variants $variantname] != -1 &&
-                    [variant_desc $porturl $variantname] == ""} {
+                if {$variantname in $local_variants &&
+                    [variant_desc $porturl $variantname] eq ""} {
                     ui_warn "Variant $variantname does not have a description"
                     incr warnings
                     set desc_ok false
-                } elseif {$variantdesc == ""} {
+                } elseif {$variantdesc eq ""} {
                     set variantdesc "(pre-defined variant)"
                 }
             } else {
-                if {[variant_desc $porturl $variantname] != ""} {
+                if {[variant_desc $porturl $variantname] ne ""} {
                     ui_warn "Variant $variantname overrides global description"
                     incr warnings
                 }
@@ -448,11 +497,24 @@ proc portlint::lint_main {args} {
     }
 
     set all_depends {}
-    if {[info exists depends_fetch]} { eval "lappend all_depends $depends_fetch" }
-    if {[info exists depends_extract]} { eval "lappend all_depends $depends_extract" }
-    if {[info exists depends_lib]} { eval "lappend all_depends $depends_lib" }
-    if {[info exists depends_build]} { eval "lappend all_depends $depends_build" }
-    if {[info exists depends_run]} { eval "lappend all_depends $depends_run" }
+    if {[info exists depends_fetch]} {
+        lappend all_depends {*}$depends_fetch
+    }
+    if {[info exists depends_extract]} {
+        lappend all_depends {*}$depends_extract
+    }
+    if {[info exists depends_lib]} {
+        lappend all_depends {*}$depends_lib
+    }
+    if {[info exists depends_build]} {
+        lappend all_depends {*}$depends_build
+    }
+    if {[info exists depends_run]} {
+        lappend all_depends {*}$depends_run
+    }
+    if {[info exists depends_test]} {
+        lappend all_depends {*}$depends_test
+    }
     foreach depspec $all_depends {
         set dep [lindex [split $depspec :] end]
         if {[catch {set res [mport_lookup $dep]} error]} {
@@ -460,7 +522,7 @@ proc portlint::lint_main {args} {
             ui_debug "$errorInfo"
             continue
         }
-        if {$res == ""} {
+        if {$res eq ""} {
             ui_error "Unknown dependency: $dep"
             incr errors
         } else {
@@ -469,7 +531,7 @@ proc portlint::lint_main {args} {
     }
 
     # Check for multiple dependencies
-    foreach deptype {depends_extract depends_lib depends_build depends_run} {
+    foreach deptype {depends_extract depends_lib depends_build depends_run depends_test} {
         if {[info exists $deptype]} {
             array set depwarned {}
             foreach depspec [set $deptype] {
@@ -480,6 +542,45 @@ proc portlint::lint_main {args} {
                     # Report each depspec only once
                     set depwarned($depspec) yes
                 }
+            }
+        }
+    }
+
+    if {[info exists replaced_by]} {
+        if {[regexp {[^[:alnum:]_.-]} $replaced_by]} {
+            ui_error "replaced_by should be a single port name, invalid value: $replaced_by"
+            incr errors
+        } else {
+            if {[catch {set res [mport_lookup $replaced_by]} error]} {
+                global errorInfo
+                ui_debug "$errorInfo"
+            }
+            if {$res eq ""} {
+                ui_error "replaced_by references unknown port: $replaced_by"
+                incr errors
+            } else {
+                ui_info "OK: replaced_by $replaced_by"
+            }
+        }
+    }
+
+    if {[info exists conflicts]} {
+        foreach cport $conflicts {
+            if {[regexp {[^[:alnum:]_.-]} $cport]} {
+                ui_error "conflicts lists invalid value, should be port name: $cport"
+                incr errors
+                continue
+            }
+            if {[catch {set res [mport_lookup $cport]} error]} {
+                global errorInfo
+                ui_debug "$errorInfo"
+                continue
+            }
+            if {$res eq ""} {
+                ui_error "conflicts references unknown port: $cport"
+                incr errors
+            } else {
+                ui_info "OK: conflicts $cport"
             }
         }
     }
@@ -499,19 +600,19 @@ proc portlint::lint_main {args} {
                 $addr == "openmaintainer@macports.org"} {
             ui_warn "Using full email address for no/open maintainer"
             incr warnings
-        } elseif [regexp "^(.+)@macports.org$" $addr -> localpart] {
+        } elseif {[regexp "^(.+)@macports.org$" $addr -> localpart]} {
             ui_warn "Maintainer email address for $localpart includes @macports.org"
             incr warnings
         } elseif {$addr == "darwinports@opendarwin.org"} {
             ui_warn "Using legacy email address for no/open maintainer"
             incr warnings
-        } elseif [regexp "^(.+)@(.+)$" $addr -> localpart domain] {
+        } elseif {[regexp "^(.+)@(.+)$" $addr -> localpart domain]} {
             ui_warn "Maintainer email address should be obfuscated as $domain:$localpart"
             incr warnings
         }
     }
 
-    if {$license == "unknown"} {
+    if {$license eq "unknown"} {
         ui_warn "no license set"
         incr warnings
     } else {
@@ -525,6 +626,7 @@ proc portlint::lint_main {args} {
             # space instead of hyphen
             if {[string is double -strict $test]} {
                 ui_error "Invalid license '${prev} ${test}': missing hyphen between ${prev} ${test}"
+                incr errors
 
             # missing hyphen
             } elseif {![string equal -nocase "X11" $test]} {
@@ -537,8 +639,9 @@ proc portlint::lint_main {args} {
                         # if the last character of license name is a number or plus sign
                         # then a hyphen is missing
                         set license_end [string index $subtest end]
-                        if {[string equal "+" $license_end] || [string is integer -strict $license_end]} {
+                        if {"+" eq $license_end || [string is integer -strict $license_end]} {
                             ui_error "invalid license '${test}': missing hyphen before version"
+                            incr errors
                         }
                     }
                 }
@@ -547,12 +650,15 @@ proc portlint::lint_main {args} {
             if {[string equal -nocase "BSD-2" $test]} {
                 # BSD-2 => BSD
                 ui_error "Invalid license '${test}': use BSD instead"
+                incr errors
             } elseif {[string equal -nocase "BSD-3" $test]} {
                 # BSD-3 => BSD
                 ui_error "Invalid license '${test}': use BSD instead"
+                incr errors
             } elseif {[string equal -nocase "BSD-4" $test]} {
                 # BSD-4 => BSD-old
                 ui_error "Invalid license '${test}': use BSD-old instead"
+                incr errors
             }
 
             set prev $test
@@ -591,7 +697,7 @@ proc portlint::lint_main {args} {
         set refcount  [lindex [set ${deprecated_options_name}($option)] 1]
 
         if {$refcount > 0} {
-            if {$newoption != ""} {
+            if {$newoption ne ""} {
                 ui_warn "Using deprecated option '$option', superseded by '$newoption'"
             } else {
                 ui_warn "Using deprecated option '$option'"
@@ -607,32 +713,6 @@ proc portlint::lint_main {args} {
     ui_debug "Version: $version"
     ui_debug "Revision: $revision"
     ui_debug "Archs: $portarch"
-
-    ###################################################################
-
-    set svn_cmd ""
-    catch {set svn_cmd [findBinary svn]}
-    if {$svn_cmd != "" && ([file exists $portpath/.svn] || ![catch {exec $svn_cmd info $portpath > /dev/null 2>@1}])} {
-        ui_debug "Checking svn properties"
-        if [catch {exec $svn_cmd propget svn:keywords $portfile 2>@1} output] {
-            ui_warn "Unable to check for svn:keywords property: $output"
-        } else {
-            ui_debug "Property svn:keywords is \"$output\", should be \"Id\""
-            if {$output != "Id"} {
-                ui_error "Missing subversion property on Portfile, please execute: svn ps svn:keywords Id Portfile"
-                incr errors
-            }
-        }
-        if [catch {exec $svn_cmd propget svn:eol-style $portfile 2>@1} output] {
-            ui_warn "Unable to check for svn:eol-style property: $output"
-        } else {
-            ui_debug "Property svn:eol-style is \"$output\", should be \"native\""
-            if {$output != "native"} {
-                ui_error "Missing subversion property on Portfile, please execute: svn ps svn:eol-style native Portfile"
-                incr errors
-            }
-        }
-    }
 
     ###################################################################
 

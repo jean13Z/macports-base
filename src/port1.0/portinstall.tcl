@@ -78,10 +78,9 @@ proc portinstall::install_start {args} {
 
 proc portinstall::create_archive {location archive.type} {
     global workpath destpath portpath subport version revision portvariants \
-           epoch os.platform PortInfo installPlist \
+           epoch PortInfo installPlist \
            archive.env archive.cmd archive.pre_args archive.args \
-           archive.post_args archive.dir \
-           depends_fetch depends_extract depends_build depends_lib depends_run
+           archive.post_args archive.dir depends_lib depends_run
     set archive.env {}
     set archive.cmd {}
     set archive.pre_args {}
@@ -122,7 +121,13 @@ proc portinstall::create_archive {location archive.type} {
                 set archive.pre_args {-cvf}
                 if {[regexp {z2?$} ${archive.type}]} {
                     if {[regexp {bz2?$} ${archive.type}]} {
-                        set gzip "bzip2"
+                        if {![catch {binaryInPath lbzip2}]} {
+                            set gzip "lbzip2"
+                        } elseif {![catch {binaryInPath pbzip2}]} {
+                            set gzip "pbzip2"
+                        } else {
+                            set gzip "bzip2"
+                        }
                         set level 9
                     } elseif {[regexp {lz$} ${archive.type}]} {
                         set gzip "lzma"
@@ -238,7 +243,7 @@ proc portinstall::create_archive {location archive.type} {
     array set ourvariations $PortInfo(active_variants)
     set vlist [lsort -ascii [array names ourvariations]]
     foreach v $vlist {
-        if {$ourvariations($v) == "+"} {
+        if {$ourvariations($v) eq "+"} {
             puts $fd "@portvariant +${v}"
         }
     }
@@ -262,12 +267,14 @@ proc portinstall::create_archive {location archive.type} {
 
     # also save the contents for our own use later
     set installPlist {}
+    set destpathLen [string length $destpath]
     fs-traverse -depth fullpath $destpath {
-        if {[file type $fullpath] == "directory"} {
+        if {[file type $fullpath] eq "directory"} {
             continue
         }
-        set relpath [strsed $fullpath "s|^$destpath/||"]
-        if {![regexp {^[+]} $relpath]} {
+
+        set relpath [string range $fullpath $destpathLen+1 end]
+        if {[string index $relpath 0] ne "+"} {
             puts $fd "$relpath"
             lappend installPlist [file join [file separator] $relpath]
             if {[file isfile $fullpath]} {
@@ -303,20 +310,18 @@ proc portinstall::extract_contents {location type} {
 }
 
 proc portinstall::install_main {args} {
-    global subport version portpath categories description long_description \
-    homepage depends_run package-install workdir workpath \
-    worksrcdir UI_PREFIX destroot revision maintainers user_options \
-    portvariants negated_variants targets depends_lib PortInfo epoch license \
-    os.platform os.major portarchivetype installPlist
+    global subport version portpath depends_run revision user_options \
+    portvariants negated_variants depends_lib PortInfo epoch \
+    os.platform os.major portarchivetype installPlist registry.path porturl
 
     set oldpwd [pwd]
-    if {$oldpwd == ""} {
+    if {$oldpwd eq ""} {
         set oldpwd $portpath
     }
 
     set location [get_portimage_path]
     set archive_path [find_portarchive_path]
-    if {$archive_path != ""} {
+    if {$archive_path ne ""} {
         set install_dir [file dirname $location]
         file mkdir $install_dir
         file rename -force $archive_path $install_dir
@@ -336,7 +341,7 @@ proc portinstall::install_main {args} {
         if {[info exists $deplist]} {
             foreach dep [set $deplist] {
                 set dep_portname [_get_dep_port $dep]
-                if {$dep_portname != ""} {
+                if {$dep_portname ne ""} {
                     lappend dep_portnames $dep_portname
                 }
             }
@@ -356,7 +361,7 @@ proc portinstall::install_main {args} {
         $regref os_major ${os.major}
         $regref archs [get_canonical_archs]
         # Trick to have a portable GMT-POSIX epoch-based time.
-        $regref date [expr [clock scan now -gmt true] - [clock scan "1970-1-1 00:00:00" -gmt true]]
+        $regref date [expr {[clock scan now -gmt true] - [clock scan "1970-1-1 00:00:00" -gmt true]}]
         if {[info exists negated_variants]} {
             $regref negated_variants $negated_variants
         }
@@ -373,11 +378,42 @@ proc portinstall::install_main {args} {
             # register files
             $regref map $installPlist
         }
-        
+
         # store portfile
-        set fd [open [file join ${portpath} Portfile]]
-        $regref portfile [read $fd]
-        close $fd
+        set portfile_path [file join $portpath Portfile]
+        set portfile_sha256 [sha256 file $portfile_path]
+        set portfile_size [file size $portfile_path]
+        set portfile_reg_dir [file join ${registry.path} registry portfiles ${subport}-${version}_${revision} ${portfile_sha256}-${portfile_size}]
+        file mkdir $portfile_reg_dir
+        set portfile_reg_path ${portfile_reg_dir}/Portfile
+        if {![file isfile $portfile_reg_path] || [file size $portfile_reg_path] != $portfile_size || [sha256 file $portfile_reg_path] ne $portfile_sha256} {
+            file copy -force $portfile_path $portfile_reg_dir
+            file attributes $portfile_reg_path -permissions 0644
+        }
+        $regref portfile ${portfile_sha256}-${portfile_size}
+
+        # store portgroups
+        if {[info exists PortInfo(portgroups)]} {
+            foreach pg $PortInfo(portgroups) {
+                set pgname [lindex $pg 0]
+                set pgversion [lindex $pg 1]
+                set groupFile [getportresourcepath $porturl "port1.0/group/${pgname}-${pgversion}.tcl"]
+                if {[file isfile $groupFile]} {
+                    set pgsha256 [sha256 file $groupFile]
+                    set pgsize [file size $groupFile]
+                    set pg_reg_dir [file join ${registry.path} registry portgroups ${pgsha256}-${pgsize}]
+                    set pg_reg_path ${pg_reg_dir}/${pgname}-${pgversion}.tcl
+                    if {![file isfile $pg_reg_path] || [file size $pg_reg_path] != $pgsize || [sha256 file $pg_reg_path] ne $pgsha256} {
+                        file mkdir $pg_reg_dir
+                        file copy -force $groupFile $pg_reg_dir
+                    }
+                    file attributes $pg_reg_path -permissions 0644
+                    $regref addgroup $pgname $pgversion $pgsha256 $pgsize
+                } else {
+                    ui_debug "install_main: no portgroup ${pgname}-${pgversion}.tcl found"
+                }
+            }
+        }
     }
 
     _cd $oldpwd

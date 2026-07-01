@@ -35,15 +35,15 @@ namespace eval portsandbox {
 
 options portsandbox_supported portsandbox_active portsandbox_profile
 default portsandbox_supported {[file executable $portutil::autoconf::sandbox_exec_path]}
-default portsandbox_active {[expr $portsandbox_supported && $sandbox_enable]}
+default portsandbox_active {[expr {$portsandbox_supported && $sandbox_enable}]}
 default portsandbox_profile {}
 
 # set up a suitable profile to pass to sandbox-exec, based on the target
 # command line usage would be:
 # sandbox-exec -p '(version 1) (allow default) (deny file-write*) (allow file-write* <filter>)' some-command
 proc portsandbox::set_profile {target} {
-    global os.major portsandbox_profile workpath distpath altprefix \
-        package.destpath configure.ccache ccache_dir rpm.srcdir rpm.tmpdir
+    global os.major portsandbox_profile workpath distpath prefix altprefix \
+        package.destpath configure.ccache ccache_dir
 
     switch $target {
         activate -
@@ -51,7 +51,8 @@ proc portsandbox::set_profile {target} {
         dmg -
         mdmg -
         load -
-        unload {
+        unload -
+        reload {
             set portsandbox_profile ""
             return
         }
@@ -73,14 +74,11 @@ proc portsandbox::set_profile {target} {
                 set allow_dirs [list ${package.destpath}]
             }
         }
-        rpm -
-        srpm {
-            set allow_dirs [list ${rpm.srcdir} ${rpm.tmpdir}]
-        }
     }
 
     # TODO: remove altprefix support
     lappend allow_dirs $workpath $altprefix
+    lappend allow_dirs ${portutil::autoconf::trace_sipworkaround_path}
     if {${configure.ccache}} {
         lappend allow_dirs $ccache_dir
     }

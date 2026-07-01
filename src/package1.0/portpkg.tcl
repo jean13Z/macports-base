@@ -45,13 +45,15 @@ namespace eval portpkg {
 
 # define options
 options package.type package.destpath package.flat package.resources package.scripts
+options pkg.asroot
 
 # Set defaults
 default package.destpath {${workpath}}
 default package.resources {${workpath}/pkg_resources}
 default package.scripts  {${workpath}/pkg_scripts}
 # Need productbuild to make flat packages really work
-default package.flat     {[expr [vercmp $macosx_deployment_target 10.6] >= 0]}
+default package.flat     {[expr {[vercmp $macosx_deployment_target 10.6] >= 0}]}
+default pkg.asroot no
 
 set_ui_prefix
 
@@ -113,11 +115,11 @@ proc portpkg::package_pkg {portname portepoch portversion portrevision} {
     pkg_post_unarchive_deletions portpkg::language
 
     set portepoch_namestr ""
-    if {${portepoch} != "0"} {
+    if {${portepoch} != 0} {
         set portepoch_namestr "${portepoch}_"
     }
     set portrevision_namestr ""
-    if {${portrevision} != "0"} {
+    if {${portrevision} != 0} {
         set portrevision_namestr "_${portrevision}"
     }
 
@@ -134,7 +136,7 @@ proc portpkg::package_pkg {portname portepoch portversion portrevision} {
         if ([file exists "${destpath}/$dir"]) {
             # certain toplevel directories really are symlinks. leaving them as directories make pax lose the symlinks. that's bad.
             file mkdir "${destpath}/private/${dir}"
-            eval file rename [glob ${destpath}/${dir}/*] "${destpath}/private/${dir}"
+            file rename {*}[glob ${destpath}/${dir}/*] "${destpath}/private/${dir}"
             delete "${destpath}/${dir}"
         }
     }
@@ -314,12 +316,12 @@ proc portpkg::write_description_plist {infofile portname portversion description
 
 proc portpkg::write_welcome_html {filename portname portepoch portversion portrevision long_description description homepage} {
     set fd [open ${filename} w+]
-    if {$long_description == ""} {
+    if {$long_description eq ""} {
         set long_description $description
     }
 
     set portname [xml_escape $portname]
-    if {$portepoch != "0"} {
+    if {$portepoch != 0} {
         set portepoch [xml_escape $portepoch]
         set portepoch_str "${portepoch}_"
     } else {
@@ -327,7 +329,7 @@ proc portpkg::write_welcome_html {filename portname portepoch portversion portre
         set portepoch_str ""
     }
     set portversion [xml_escape $portversion]
-    if {$portrevision != "0"} {
+    if {$portrevision != 0} {
         set portrevision [xml_escape $portrevision]
         set portrevision_str "_${portrevision}"
     } else {
@@ -350,7 +352,7 @@ proc portpkg::write_welcome_html {filename portname portepoch portversion portre
 <font face=\"Helvetica\">${long_description}</font>
 <p>"
 
-    if {$homepage != ""} {
+    if {$homepage ne ""} {
         puts $fd "<font face=\"Helvetica\"><a href=\"${homepage}\">${homepage}</a></font><p>"
     }
 
@@ -366,10 +368,10 @@ proc portpkg::write_sizes_file {sizesfile pkgpath destpath} {
     if {[catch {set numFiles [llength [split [exec [findBinary lsbom $portutil::autoconf::lsbom_path] -s ${pkgpath}/Contents/Archive.bom] "\n"]]} result]} {
         return -code error [format [msgcat::mc "Reading package bom failed: %s"] $result]
     }
-    if {[catch {set compressedSize [expr [dirSize ${pkgpath}] / 1024]} result]} {
+    if {[catch {set compressedSize [expr {[dirSize ${pkgpath}] / 1024}]} result]} {
         return -code error [format [msgcat::mc "Error determining compressed size: %s"] $result]
     }
-    if {[catch {set installedSize [expr [dirSize ${destpath}] / 1024]} result]} {
+    if {[catch {set installedSize [expr {[dirSize ${destpath}] / 1024}]} result]} {
         return -code error [format [msgcat::mc "Error determining installed size: %s"] $result]
     }
     if {[catch {set infoSize [file size ${pkgpath}/Contents/Info.plist]} result]} {
@@ -399,7 +401,7 @@ proc portpkg::write_package_info {infofile} {
 proc portpkg::write_distribution {dfile portname portepoch portversion portrevision} {
     global macosx_deployment_target
     set portname [xml_escape $portname]
-    if {$portepoch != "0"} {
+    if {$portepoch != 0} {
         set portepoch [xml_escape $portepoch]
         set portepoch_str "${portepoch}_"
     } else {
@@ -407,7 +409,7 @@ proc portpkg::write_distribution {dfile portname portepoch portversion portrevis
         set portepoch_str ""
     }
     set portversion [xml_escape $portversion]
-    if {$portrevision != "0"} {
+    if {$portrevision != 0} {
         set portrevision [xml_escape $portrevision]
         set portrevision_str "_${portrevision}"
     } else {
@@ -503,11 +505,11 @@ proc portpkg::mp_version_to_apple_version {portepoch portversion portrevision} {
             # subtracted, otherwise subtract 'a'.  Add 1 to the value
             # so that 'a' and 'A' are mapped to 1, not 0.
             if {$ord < $ord_a} {
-                set j [expr $ord - $ord_A + 1]
+                set j [expr {$ord - $ord_A + 1}]
             } else {
-                set j [expr $ord - $ord_a + 1]
+                set j [expr {$ord - $ord_a + 1}]
             }
-            set i [expr 26*$i + $j]
+            set i [expr {26*$i + $j}]
         }
         lappend vs $i
     }

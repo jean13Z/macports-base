@@ -30,9 +30,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if HAVE_CONFIG_H
+#ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+
+/* needed for NAME_MAX and PATH_MAX on Linux */
+#define _XOPEN_SOURCE
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -48,7 +51,6 @@
 /* ========================================================================= **
  * Definitions
  * ========================================================================= */
-#pragma mark Definitions
 
 /* ------------------------------------------------------------------------- **
  * Internal structures
@@ -184,8 +186,6 @@ Tcl_ObjType tclFilemapType = {
 /* ========================================================================= **
  * Tree access functions
  * ========================================================================= */
-#pragma mark -
-#pragma mark Access functions
 
 /**
  * Load the database from a file.
@@ -312,7 +312,7 @@ Create(
  *
  * @param ioDatabaseBuffer	pointer to the buffer (where the node starts),
  *							updated by this function.
- * @param outTree			on output, a tree in memory.
+ * @param outNode			on output, a tree in memory.
  * @param ioBytesLeft		number of bytes remaining in the buffer (updated
  *							by this function).
  */
@@ -467,8 +467,8 @@ LoadNode(
  * Save the database to the file.
  * This function saves the header and then calls SaveNode.
  *
- * @param inDatabaseFd	file descriptor of the open file (the cursor is reset)
- * @param inTree		tree of the database.
+ * @param inDatabasePath	file descriptor of the open file (the cursor is reset)
+ * @param inTree			tree of the database.
  */
 int
 Save(
@@ -930,7 +930,6 @@ List(SNode* inRoot, const char* inValue)
  * @param outList		the list to populate with paths.
  * @param inSubpath		the path of the current root.
  * @param inSubpathLen	the length, without the terminator, of the path.
- * @return the list of paths which has value for their value.
  */
 void
 ListSubtree(
@@ -1119,8 +1118,6 @@ Delete(SNode** ioRoot, const char* inPath)
 /* ========================================================================= **
  * Tcl object functions
  * ========================================================================= */
-#pragma mark -
-#pragma mark Tcl object functions
 
 /**
  * Free the object.
@@ -1206,8 +1203,6 @@ SetFilemapFromAny(Tcl_Interp* inInterp, Tcl_Obj* inObjPtr UNUSED)
 /* ========================================================================= **
  * Entry points
  * ========================================================================= */
-#pragma mark -
-#pragma mark Entry points
 
 /**
  * Set the result if an error occurred and return TCL_ERROR.

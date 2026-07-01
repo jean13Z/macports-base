@@ -1,5 +1,3 @@
-# $Id$
-
 # MacPorts system-wide configuration file.
 # Commented-out values are defaults unless otherwise noted.
 
@@ -60,7 +58,7 @@ variants_conf       	@MPCONFIGDIR_EXPANDED@/variants.conf
 
 # Space-delimited list of CPU architectures to target when building
 # universal. Defaults to "i386 ppc" on OS X 10.5 and earlier and
-# "x64_64 i386" on OS X 10.6 and later.
+# "x86_64 i386" on OS X 10.6 and later.
 universal_archs     	@UNIVERSAL_ARCHS@
 
 # Use ccache, a compiler cache for C, C++, Objective-C, and
@@ -105,8 +103,8 @@ universal_archs     	@UNIVERSAL_ARCHS@
 #keeplogs            	no
 
 # The rsync server for fetching MacPorts base during selfupdate. This
-# setting is NOT used when downloading the ports tree; the sources for
-# the ports tree are set in sources.conf. See
+# setting is NOT used when downloading ports trees; ports trees are
+# configured using the file referenced by sources_conf. See
 # https://trac.macports.org/wiki/Mirrors#MacPortsSource for a list of
 # available servers.
 #rsync_server        	rsync.macports.org
@@ -116,7 +114,7 @@ universal_archs     	@UNIVERSAL_ARCHS@
 # and will be used to verify its integrity. See
 # https://trac.macports.org/wiki/Mirrors#MacPortsSource to find the
 # correct rsync_dir for a particular rsync_server.
-#rsync_dir           	release/tarballs/base.tar
+#rsync_dir           	macports/release/tarballs/base.tar
 
 # Options to pass to rsync when fetching MacPorts base and the ports tree.
 #rsync_options       	-rtzv --delete-after
@@ -128,11 +126,13 @@ universal_archs     	@UNIVERSAL_ARCHS@
 # - default: Create StartupItems for launchd on OS X and for rc.d on
 #   other platforms.
 # - none: Disable creation of StartupItems.
+# This setting only applies when building ports from source.
 #startupitem_type    	default
 
 # Create system-level symlinks to generated StartupItems. If set to
 # "no", symlinks will not be created; otherwise, symlinks will be placed
 # in /Library/LaunchDaemons or /Library/LaunchAgents as appropriate.
+# This setting only applies when building ports from source.
 #startupitem_install	yes
 
 # Extra environment variables to keep. MacPorts sanitizes its
@@ -197,3 +197,6 @@ universal_archs     	@UNIVERSAL_ARCHS@
 # removing unnecessary files and directories prior to pkg or mpkg
 # deployment.
 #pkg_post_unarchive_deletions	include share/doc share/man
+
+# Whether the user interface should ask interactive questions
+#ui_interactive         yes

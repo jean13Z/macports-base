@@ -4,7 +4,7 @@
  * vim:expandtab:tw=80
  *
  * Copyright (c) 2007 Chris Pickel <sfiera@macports.org>
- * Copyright (c) 2012 The MacPorts Project
+ * Copyright (c) 2012, 2014 The MacPorts Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,6 +32,7 @@
 #include <config.h>
 #endif
 
+#include "portgroup.h"
 #include "entry.h"
 #include "file.h"
 #include "sql.h"
@@ -52,6 +53,21 @@
  *       much easier for errors, and there's no need to have more than one error
  *       alive at any given time.
  */
+
+/*
+ * Error constants. Those need to be constants and cannot be string literals
+ * because we'll use address comparisons for those and compilers don't have to
+ * guarantee string literals always have the same address (they don't have to
+ * guarantee string literals will have an address at all, so comparing the
+ * address of a string with a string literal is undefined behavior).
+ */
+char *const registry_err_not_found      = "registry::not-found";
+char *const registry_err_invalid        = "registry::invalid";
+char *const registry_err_constraint     = "registry::constraint";
+char *const registry_err_sqlite_error   = "registry::sqlite-error";
+char *const registry_err_misuse         = "registry::misuse";
+char *const registry_err_cannot_init    = "registry::cannot-init";
+char *const registry_err_already_active = "registry::already-active";
 
 /**
  * Destroys a `reg_error` object. This should be called on any reg_error when a
@@ -189,19 +205,6 @@ int reg_attach(reg_registry* reg, const char* path, reg_error* errPtr) {
         }
     }
     /* can_write is still true if one of the stat calls succeeded */
-    if (can_write) {
-        if (sb.st_uid == getuid()) {
-            if (!(sb.st_mode & S_IWUSR)) {
-                can_write = 0;
-            }
-        } else if (sb.st_gid == getgid()) {
-            if (!(sb.st_mode & S_IWGRP)) {
-                can_write = 0;
-            }
-        } else if (!(sb.st_mode & S_IWOTH) && getuid() != 0) {
-            can_write = 0;
-        }
-    }
     if (initialized || can_write) {
         sqlite3_stmt* stmt = NULL;
         char* query = sqlite3_mprintf("ATTACH DATABASE '%q' AS registry", path);
@@ -221,6 +224,8 @@ int reg_attach(reg_registry* reg, const char* path, reg_error* errPtr) {
                                     sizeof(sqlite_int64)/sizeof(int));
                             Tcl_InitHashTable(&reg->open_files,
                                     TCL_STRING_KEYS);
+                            Tcl_InitHashTable(&reg->open_portgroups,
+                                    sizeof(sqlite_int64)/sizeof(int));
                             reg->status |= reg_attached;
                             result = 1;
                         }
@@ -467,5 +472,149 @@ int reg_vacuum(char *db_path) {
         sqlite3_finalize(stmt);
     }
     sqlite3_close(db);
+    return result;
+}
+
+/**
+ * Functions for access to the metadata table
+ */
+
+/**
+ * @param [in] reg     registry to get value from
+ * @param [in] key     metadata key to get
+ * @param [out] value  the value of the metadata
+ * @param [out] errPtr on error, a description of the error that occurred
+ * @return             true if success; false if failure
+ */
+int reg_get_metadata(reg_registry* reg, const char* key, char** value,
+        reg_error* errPtr) {
+    int result = 0;
+    sqlite3_stmt* stmt = NULL;
+    char* query = "SELECT value FROM registry.metadata WHERE key=?";
+    const char *text;
+    if (sqlite3_prepare_v2(reg->db, query, -1, &stmt, NULL) == SQLITE_OK
+            && (sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC) == SQLITE_OK)) {
+        int r;
+        do {
+            r = sqlite3_step(stmt);
+            switch (r) {
+                case SQLITE_ROW:
+                    text = (const char*)sqlite3_column_text(stmt, 0);
+                    if (text) {
+                        *value = strdup(text);
+                        result = 1;
+                    } else {
+                        reg_sqlite_error(reg->db, errPtr, query);
+                    }
+                    break;
+                case SQLITE_DONE:
+                    errPtr->code = REG_NOT_FOUND;
+                    errPtr->description = "no such key in metadata";
+                    errPtr->free = NULL;
+                    break;
+                case SQLITE_BUSY:
+                    continue;
+                default:
+                    reg_sqlite_error(reg->db, errPtr, query);
+                    break;
+            }
+        } while (r == SQLITE_BUSY);
+    } else {
+        reg_sqlite_error(reg->db, errPtr, query);
+    }
+    if (stmt) {
+        sqlite3_finalize(stmt);
+    }
+    return result;
+}
+
+/**
+ * @param [in] reg     registry to set value in
+ * @param [in] key     metadata key to set
+ * @param [in] value   the desired value for the key
+ * @param [out] errPtr on error, a description of the error that occurred
+ * @return             true if success; false if failure
+ */
+int reg_set_metadata(reg_registry* reg, const char* key, const char* value,
+        reg_error* errPtr) {
+    int result = 0;
+    sqlite3_stmt* stmt = NULL;
+    char* query;
+    char *test_value;
+    int get_returnval = reg_get_metadata(reg, key, &test_value, errPtr);
+    if (get_returnval) {
+        free(test_value);
+        query = sqlite3_mprintf("UPDATE registry.metadata SET value = '%q' WHERE key='%q'",
+            value, key);
+    } else if (errPtr->code == REG_NOT_FOUND) {
+        query = sqlite3_mprintf("INSERT INTO registry.metadata (key, value) VALUES ('%q', '%q')",
+            key, value);
+    } else {
+        return get_returnval;
+    }
+    if (sqlite3_prepare_v2(reg->db, query, -1, &stmt, NULL) == SQLITE_OK) {
+        int r;
+        do {
+            r = sqlite3_step(stmt);
+            switch (r) {
+                case SQLITE_DONE:
+                    result = 1;
+                    break;
+                case SQLITE_BUSY:
+                    break;
+                default:
+                    reg_sqlite_error(reg->db, errPtr, query);
+                    break;
+            }
+        } while (r == SQLITE_BUSY);
+    } else {
+        reg_sqlite_error(reg->db, errPtr, query);
+    }
+    if (stmt) {
+        sqlite3_finalize(stmt);
+    }
+    sqlite3_free(query);
+    return result;
+}
+
+/**
+ * @param [in] reg        the registry to delete the metadata from
+ * @param [in] key        the metadata key to delete
+ * @param [out] errPtr    on error, a description of the error that occurred
+ * @return                true if success; false if failure
+ */
+int reg_del_metadata(reg_registry* reg, const char* key, reg_error* errPtr) {
+    int result = 1;
+    sqlite3_stmt* stmt = NULL;
+    char* query = "DELETE FROM registry.metadata WHERE key=?";
+    if ((sqlite3_prepare_v2(reg->db, query, -1, &stmt, NULL) == SQLITE_OK)
+            && (sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC) == SQLITE_OK)) {
+        int r;
+        do {
+            r = sqlite3_step(stmt);
+            switch (r) {
+                case SQLITE_DONE:
+                    if (sqlite3_changes(reg->db) == 0) {
+                        reg_throw(errPtr, REG_INVALID, "no such metadata key");
+                        result = 0;
+                    } else {
+                        sqlite3_reset(stmt);
+                    }
+                    break;
+                case SQLITE_BUSY:
+                    break;
+                default:
+                    reg_sqlite_error(reg->db, errPtr, query);
+                    result = 0;
+                    break;
+            }
+        } while (r == SQLITE_BUSY);
+    } else {
+        reg_sqlite_error(reg->db, errPtr, query);
+        result = 0;
+    }
+    if (stmt) {
+        sqlite3_finalize(stmt);
+    }
     return result;
 }

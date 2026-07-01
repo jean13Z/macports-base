@@ -41,6 +41,9 @@
 #include <config.h>
 #endif
 
+/* required for u_int and u_long */
+#define _BSD_SOURCE
+
 #if HAVE_SYS_CDEFS_H
 #include <sys/cdefs.h>
 #endif
@@ -104,7 +107,7 @@ extern int copyfile(const char *from, const char *to, void *state,
 #define ALLPERMS (S_ISUID|S_ISGID|S_ISTXT|S_IRWXU|S_IRWXG|S_IRWXO)
 #endif
 
-#if !HAVE_SETMODE
+#ifndef HAVE_SETMODE
 #include "setmode.h"
 #endif
 
@@ -148,7 +151,7 @@ InstallCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Obj *
 	u_long fset = 0;
 	int no_target, rval;
 	u_int iflags;
-	char *flags, *curdir;
+	char *curdir;
 	const char *group, *owner, *cp;
 	Tcl_Obj *to_name;
 	int dodir = 0;
@@ -198,7 +201,7 @@ InstallCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Obj *
 				Tcl_WrongNumArgs(interp, 1, objv, "-f");
 				return TCL_ERROR;
 			}
-			flags = Tcl_GetString(*(++objv));
+			char *flags = Tcl_GetString(*(++objv));
 			if (strtofflags(&flags, &fset, NULL)) {
 				Tcl_SetResult(interp, "invalid flags for -f", TCL_STATIC);
 				return TCL_ERROR;
@@ -307,10 +310,7 @@ InstallCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Obj *
 			return TCL_ERROR;
 		}
 		else {
-			char msg[255];
-
-			snprintf(msg, sizeof msg, "%s: chdir(%s)\n", funcname, curdir);
-			ui_info(interp, msg);
+                        ui_info(interp, "%s: chdir(%s)", funcname, curdir);
 		}
 	}
 
@@ -428,16 +428,17 @@ numeric_id(Tcl_Interp *interp, const char *name, const char *type, int *rval)
  *	build a path name and install the file
  */
 static int
+#if defined(UF_NODUMP)
 install(Tcl_Interp *interp, const char *from_name, const char *to_name, u_long fset, u_int flags)
+#else
+install(Tcl_Interp *interp, const char *from_name, const char *to_name, u_long fset UNUSED, u_int flags)
+#endif
 {
 	struct stat from_sb, temp_sb, to_sb;
 	struct timeval tvb[2];
 	int devnull, files_match, from_fd = 0, serrno, target;
 	int tempcopy, temp_fd, to_fd = 0;
 	char backup[MAXPATHLEN], *p, pathbuf[MAXPATHLEN], tempfile[MAXPATHLEN];
-
-        /* message contains function name, two paths and a little bit extra formatting */
-        char msg[MAXPATHLEN * 2 + 32];
 
 	files_match = 0;
 
@@ -540,8 +541,7 @@ install(Tcl_Interp *interp, const char *from_name, const char *to_name, u_long f
 				Tcl_SetResult(interp, errmsg, TCL_VOLATILE);
 				return TCL_ERROR;
 			}
-			snprintf(msg, sizeof msg, "%s: %s -> %s\n", funcname, from_name, to_name);
-			ui_info(interp, msg);
+			ui_info(interp, "%s: %s -> %s", funcname, from_name, to_name);
 		}
 		if (!devnull) {
 			if (copy(interp, from_fd, from_name, to_fd,
@@ -643,8 +643,7 @@ install(Tcl_Interp *interp, const char *from_name, const char *to_name, u_long f
 				Tcl_SetResult(interp, errmsg, TCL_VOLATILE);
 				return TCL_ERROR;
 			}
-			snprintf(msg, sizeof msg, "%s: %s -> %s\n", funcname, to_name, backup);
-			ui_info(interp, msg);
+                        ui_info(interp, "%s: %s -> %s", funcname, to_name, backup);
 			if (rename(to_name, backup) < 0) {
 				char errmsg[255];
 
@@ -657,8 +656,7 @@ install(Tcl_Interp *interp, const char *from_name, const char *to_name, u_long f
 				return TCL_ERROR;
 			}
 		}
-		snprintf(msg, sizeof msg, "%s: %s -> %s\n", funcname, from_name, to_name);
-		ui_info(interp, msg);
+                ui_info(interp, "%s: %s -> %s", funcname, from_name, to_name);
 		if (rename(tempfile, to_name) < 0) {
 			char errmsg[255];
 
@@ -869,12 +867,15 @@ create_tempfile(const char *path, char *temp, size_t tsize)
  *	create a new file, overwriting an existing one if necessary
  */
 static int
+#if defined(UF_IMMUTABLE) && defined(SF_IMMUTABLE)
 create_newfile(Tcl_Interp *interp, const char *path, int target, struct stat *sbp)
+#else
+create_newfile(Tcl_Interp *interp, const char *path, int target, struct stat *sbp UNUSED)
+#endif
 {
 	char backup[MAXPATHLEN];
 	int saved_errno = 0;
 	int newfd;
-	char msg[256];
 
 	if (target) {
 		/*
@@ -898,8 +899,7 @@ create_newfile(Tcl_Interp *interp, const char *path, int target, struct stat *sb
 				return -1;
 			}
 			(void)snprintf(backup, MAXPATHLEN, "%s%s", path, suffix);
-			snprintf(msg, sizeof msg, "%s: %s -> %s\n", funcname, path, backup);
-			ui_info(interp, msg);
+                        ui_info(interp, "%s: %s -> %s", funcname, path, backup);
 			if (rename(path, backup) < 0) {
 				char errmsg[255];
 
@@ -1057,10 +1057,7 @@ install_dir(Tcl_Interp *interp, char *path)
 					return TCL_ERROR;
 				}
 				else {
-					char msg[255];
-
-					snprintf(msg, sizeof msg, "%s: mkdir %s\n", funcname, path);
-					ui_info(interp, msg);
+                                        ui_info(interp, "%s: mkdir %s", funcname, path);
 				}
 			} else if (!S_ISDIR(sb.st_mode)) {
 				char errmsg[255];
@@ -1105,7 +1102,11 @@ usage(Tcl_Interp *interp)
  *	return true (1) if mmap should be tried, false (0) if not.
  */
 int
+#ifdef MFSNAMELEN
 trymmap(int fd)
+#else
+trymmap(int fd UNUSED)
+#endif
 {
 /*
  * The ifdef is for bootstrapping - f_fstypename doesn't exist in

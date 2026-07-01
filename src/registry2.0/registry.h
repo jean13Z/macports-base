@@ -34,6 +34,7 @@
 
 #include <tcl.h>
 #include <sqlite3.h>
+#include <cregistry/portgroup.h>
 #include <cregistry/entry.h>
 
 typedef struct _entry_list {

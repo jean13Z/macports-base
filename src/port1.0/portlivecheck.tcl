@@ -57,7 +57,7 @@ default livecheck.regex ""
 default livecheck.name default
 default livecheck.distname default
 default livecheck.version {$version}
-default livecheck.ignore_sslcert yes
+default livecheck.ignore_sslcert no
 
 proc portlivecheck::livecheck_main {args} {
     global livecheck.url livecheck.type livecheck.md5 livecheck.regex livecheck.name livecheck.distname livecheck.version \
@@ -69,15 +69,16 @@ proc portlivecheck::livecheck_main {args} {
     set updated_version "unknown"
     set has_master_sites [info exists master_sites]
     set has_homepage [info exists homepage]
+    if {!$has_homepage} {
+        set livecheck.url {}
+    }
 
     set tempfile [mktemp "/tmp/mports.livecheck.XXXXXXXX"]
-    set port_moddate [file mtime ${portpath}/Portfile]
 
-    ui_debug "Portfile modification date is [clock format $port_moddate]"
     ui_debug "Port (livecheck) version is ${livecheck.version}"
 
     set curl_options {}
-    if [tbool livecheck.ignore_sslcert] {
+    if {[tbool livecheck.ignore_sslcert]} {
         lappend curl_options "--ignore-ssl-cert"
     }
 
@@ -99,7 +100,7 @@ proc portlivecheck::livecheck_main {args} {
                 if {[regexp "^($available_types)(?::(\[^:\]+))?" ${master_site} _ site subdir]} {
                     set subdirs [split $subdir /]
                     if {[llength $subdirs] > 1} {
-                        if {[lindex $subdirs 0] == "project"} {
+                        if {[lindex $subdirs 0] eq "project"} {
                             set subdir [lindex $subdirs 1]
                         } else {
                             set subdir ""
@@ -127,7 +128,7 @@ proc portlivecheck::livecheck_main {args} {
             }
         }
     }
-    if {[lsearch -exact [split $available_types "|"] ${livecheck.type}] != -1} {
+    if {${livecheck.type} in [split $available_types "|"]} {
         # Load the defaults from _resources/port1.0/livecheck/${livecheck.type}.tcl.
         set defaults_file "$types_dir/${livecheck.type}.tcl"
         ui_debug "Loading the defaults from '$defaults_file'"
@@ -146,28 +147,32 @@ proc portlivecheck::livecheck_main {args} {
         "regexm" {
             # single and multiline regex
             ui_debug "Fetching ${livecheck.url}"
-            if {[catch {eval curl fetch $curl_options {${livecheck.url}} $tempfile} error]} {
+            set updated -1
+            if {[catch {curl fetch {*}$curl_options ${livecheck.url} $tempfile} error]} {
                 ui_error "cannot check if $subport was updated ($error)"
-                set updated -1
             } else {
                 # let's extract the version from the file.
                 set chan [open $tempfile "r"]
-                set updated -1
+                set foundmatch 0
                 set the_re [join ${livecheck.regex}]
                 ui_debug "The regex is \"$the_re\""
-                if {${livecheck.type} == "regexm"} {
+                if {${livecheck.type} eq "regexm"} {
                     set data [read $chan]
                     if {[regexp $the_re $data matched updated_version]} {
-                        if {$updated_version != ${livecheck.version}} {
-                            set updated 1
+                        set foundmatch 1
+                        ui_debug "The regex matched \"$matched\", extracted \"$updated_version\""
+                        if {$updated_version ne ${livecheck.version}} {
+                            if {[vercmp $updated_version ${livecheck.version}] > 0} {
+                                set updated 1
+                            } else {
+                                ui_error "livecheck failed for ${subport}: extracted version '$updated_version' is older than livecheck.version '${livecheck.version}'"
+                            }
                         } else {
                             set updated 0
                         }
-                        ui_debug "The regex matched \"$matched\", extracted \"$updated_version\""
                     }
                 } else {
                     set updated_version 0
-                    set foundmatch 0
                     while {[gets $chan line] >= 0} {
                         set lastoff 0
                         while {[regexp -start $lastoff -indices $the_re $line offsets]} {
@@ -181,30 +186,32 @@ proc portlivecheck::livecheck_main {args} {
                         }
                     }
                     if {$foundmatch == 1} {
-                        if {$updated_version == 0} {
-                            set updated -1
-                        } elseif {$updated_version != ${livecheck.version}} {
-                            set updated 1
+                        if {$updated_version ne ${livecheck.version}} {
+                            if {[vercmp $updated_version ${livecheck.version}] > 0} {
+                                set updated 1
+                            } else {
+                                ui_error "livecheck failed for ${subport}: extracted version '$updated_version' is older than livecheck.version '${livecheck.version}'"
+                            }
                         } else {
                             set updated 0
                         }
                     }
                 }
                 close $chan
-                if {$updated < 0} {
+                if {!$foundmatch} {
                     ui_error "cannot check if $subport was updated (regex didn't match)"
                 }
             }
         }
         "md5" {
             ui_debug "Fetching ${livecheck.url}"
-            if {[catch {eval curl fetch $curl_options {${livecheck.url}} $tempfile} error]} {
+            if {[catch {curl fetch {*}$curl_options ${livecheck.url} $tempfile} error]} {
                 ui_error "cannot check if $subport was updated ($error)"
                 set updated -1
             } else {
                 # let's compute the md5 sum.
                 set dist_md5 [md5 file $tempfile]
-                if {$dist_md5 != ${livecheck.md5}} {
+                if {$dist_md5 ne ${livecheck.md5}} {
                     ui_debug "md5sum for ${livecheck.url}: $dist_md5"
                     set updated 1
                 }
@@ -212,6 +219,7 @@ proc portlivecheck::livecheck_main {args} {
         }
         "moddate" {
             set port_moddate [file mtime ${portpath}/Portfile]
+            ui_debug "Portfile modification date is [clock format $port_moddate]"
             if {[catch {set updated [curl isnewer ${livecheck.url} $port_moddate]} error]} {
                 ui_error "cannot check if $subport was updated ($error)"
                 set updated -1
@@ -230,7 +238,7 @@ proc portlivecheck::livecheck_main {args} {
 
     file delete -force $tempfile
 
-    if {${livecheck.type} != "none"} {
+    if {${livecheck.type} ne "none"} {
         if {$updated > 0} {
             ui_msg "$subport seems to have been updated (port version: ${livecheck.version}, new version: $updated_version)"
         } elseif {$updated == 0} {

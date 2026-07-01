@@ -86,13 +86,13 @@ proc portmpkg::make_dependency_list {portname destination} {
 
     # get the union of depends_run and depends_lib
     set depends {}
-    if {[info exists portinfo(depends_run)]} { eval "lappend depends $portinfo(depends_run)" }
-    if {[info exists portinfo(depends_lib)]} { eval "lappend depends $portinfo(depends_lib)" }
+    if {[info exists portinfo(depends_run)]} { lappend depends {*}$portinfo(depends_run) }
+    if {[info exists portinfo(depends_lib)]} { lappend depends {*}$portinfo(depends_lib) }
 
     foreach depspec $depends {
         set dep [_get_dep_port $depspec]
-        if {$dep != ""} {
-            eval "lappend result [make_dependency_list $dep $destination]"
+        if {$dep ne ""} {
+            lappend result {*}[make_dependency_list $dep $destination]
         }
     }
 
@@ -122,7 +122,7 @@ proc portmpkg::make_one_package {portname mport} {
 
 proc portmpkg::epoch_namestr {portepoch} {
     set portepoch_namestr ""
-    if {${portepoch} != "0"} {
+    if {${portepoch} != 0} {
         set portepoch_namestr "${portepoch}_"
     }
     return ${portepoch_namestr}
@@ -130,7 +130,7 @@ proc portmpkg::epoch_namestr {portepoch} {
 
 proc portmpkg::revision_namestr {portrevision} {
     set portrevision_namestr ""
-    if {${portrevision} != "0"} {
+    if {${portrevision} != 0} {
         set portrevision_namestr "_${portrevision}"
     }
     return ${portrevision_namestr}
@@ -171,13 +171,13 @@ proc portmpkg::package_mpkg {portname portepoch portversion portrevision} {
         set name [lindex $dep 0]
         set epoch [lindex $dep 1]
         set epoch_namestr ""
-        if {$epoch != "0"} {
+        if {$epoch != 0} {
             set epoch_namestr "${epoch}_"
         }
         set vers [lindex $dep 2]
         set rev [lindex $dep 3]
         set rev_namestr ""
-        if {$rev != "0"} {
+        if {$rev != 0} {
             set rev_namestr "_${rev}"
         }
         set mport [lindex $dep 4]
@@ -272,7 +272,7 @@ proc portmpkg::xml_escape {s} {
 proc portmpkg::mpkg_write_info_plist {infofile portname portversion portrevision destination dependencies} {
     set vers [split $portversion "."]
 
-    if {[string index $destination end] != "/"} {
+    if {[string index $destination end] ne "/"} {
         append destination /
     }
 

@@ -63,26 +63,43 @@ proc decode_spec {specifier version revision variants} {
 ## @param [in] force if true, continue even if there are dependents
 proc check_dependents {port force {action "uninstall/deactivate"}} {
     global UI_PREFIX
-    if {[$port state] == "installed" || [llength [registry::entry imaged [$port name]]] == 1} {
+    if {[$port state] eq "installed" || [llength [registry::entry imaged [$port name]]] == 1} {
         # Check if any installed ports depend on this one
         set deplist [$port dependents]
-        if {$action == "deactivate"} {
+        if {$action eq "deactivate"} {
             set active_deplist {}
             # Check if any active ports depend on this one
             foreach p $deplist {
-                if {[$p state] == "installed"} {
+                if {[$p state] eq "installed"} {
                     lappend active_deplist $p
                 }
             }
             set deplist $active_deplist
         }
         if { [llength $deplist] > 0 } {
-            ui_msg "$UI_PREFIX [format [msgcat::mc "Unable to %s %s @%s_%s%s, the following ports depend on it:"] $action [$port name] [$port version] [$port revision] [$port variants]]"
-            foreach depport $deplist {
-                ui_msg "$UI_PREFIX [format [msgcat::mc "	%s @%s_%s%s"] [$depport name] [$depport version] [$depport revision] [$depport variants]]"
+            ## User Interaction Question
+            # ask if user wants to uninstall a port and thereby break its dependents
+            if {[info exists macports::ui_options(questions_yesno)] && ![string is true -strict $force]} { 
+                set portulist {}
+                foreach depport $deplist {
+                    lappend portulist [$depport name]@[$depport version]_[$depport revision]
+                }
+                ui_msg "Note: It is not recommended to uninstall/deactivate a port that has dependents as it breaks the dependents."
+                set retvalue [$macports::ui_options(questions_yesno) "The following ports will break:" "breakDeps" $portulist {n} 0]
+                if {$retvalue == 0} {
+                    set force "yes"
+                } else {
+                    return quit
+                }
+            } else {	
+                ui_msg "$UI_PREFIX [format [msgcat::mc "Unable to %s %s @%s_%s%s, the following ports depend on it:"] $action [$port name] [$port version] [$port revision] [$port variants]]"
+                foreach depport $deplist {
+                    ui_msg "$UI_PREFIX [format [msgcat::mc "	%s @%s_%s%s"] [$depport name] [$depport version] [$depport revision] [$depport variants]]"
+                }
             }
             if { [string is true -strict $force] } {
                 ui_warn "[string totitle $action] forced.  Proceeding despite dependencies."
+                return forcedbyuser
             } else {
                 throw registry::uninstall-error "Please uninstall the ports that depend on [$port name] first."
             }
@@ -94,7 +111,7 @@ proc check_dependents {port force {action "uninstall/deactivate"}} {
 ## @return   true if successful, false otherwise
 proc run_target {port target options} {
     set portspec "[$port name] @[$port version]_[$port revision][$port variants]"
-    if {[$port portfile] == ""} {
+    if {[$port portfile] eq ""} {
         ui_debug "no portfile in registry for $portspec"
         return 0
     }
@@ -103,16 +120,16 @@ proc run_target {port target options} {
         if {[catch {set result [mportexec $mport $target]} result] || $result != 0} {
             global errorInfo
             ui_debug "$errorInfo"
-            catch {mportclose_installed $mport}
+            catch {mportclose $mport}
             ui_warn "Failed to execute portfile from registry for $portspec"
             switch $target {
                 activate {
-                    if {[$port state] == "installed"} {
+                    if {[$port state] eq "installed"} {
                         return 1
                     }
                 }
                 deactivate {
-                    if {[$port state] == "imaged"} {
+                    if {[$port state] eq "imaged"} {
                         return 1
                     }
                 }
@@ -124,10 +141,10 @@ proc run_target {port target options} {
             }
         } else {
             global macports::keeplogs
-            if {(![info exists keeplogs] || !$keeplogs) && $target != "activate"} {
+            if {(![info exists keeplogs] || !$keeplogs) && $target ne "activate"} {
                 catch {mportexec $mport clean}
             }
-            mportclose_installed $mport
+            mportclose $mport
             return 1
         }
     } else {

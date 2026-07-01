@@ -36,6 +36,11 @@
 #include <config.h>
 #endif
 
+/* required for fdopen(3)/seteuid(2), among others */
+#define _XOPEN_SOURCE 600
+/* required for fgetln(3) on OS X */
+#define _DARWIN_C_SOURCE
+
 #include <tcl.h>
 
 #if HAVE_PATHS_H
@@ -51,8 +56,10 @@
 #include <unistd.h>
 #include <limits.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "system.h"
+#include "sip_copy_proc.h"
 #include "Pextlib.h"
 
 #if HAVE_CRT_EXTERNS_H
@@ -102,7 +109,12 @@ static int check_sandboxing(Tcl_Interp *interp, char **sandbox_exec_path, char *
     return 1;
 }
 
-/* usage: system ?-notty? ?-nice value? ?-W path? command */
+static volatile int interrupted_by = 0;
+static void handle_sigint(int s) {
+    interrupted_by = s;
+}
+
+/* usage: system ?-notty? ?-nodup? ?-nice value? ?-W path? command */
 int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
 {
     char *buf;
@@ -111,18 +123,20 @@ int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
     char *args[7];
     char *cmdstring;
     int sandbox = 0;
-    char *sandbox_exec_path;
-    char *profilestr;
+    char *sandbox_exec_path = NULL;
+    char *profilestr = NULL;
     FILE *pdes;
     int fdset[2], nullfd;
     int fline, pos, ret;
     int osetsid = 0;
+    int odup = 1; /* redirect stdin/stdout/stderr by default */
     int oniceval = INT_MAX; /* magic value indicating no change */
     const char *path = NULL;
     pid_t pid;
     uid_t euid;
     Tcl_Obj *tcl_result;
-    int read_failed, status;
+    int read_failed = 0;
+    int status;
     int i;
 
     if (objc < 2) {
@@ -136,6 +150,8 @@ int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
         char *arg = Tcl_GetString(objv[i]);
         if (strcmp(arg, "-notty") == 0) {
             osetsid = 1;
+        } else if (strcmp(arg, "-nodup") == 0) {
+            odup = 0;
         } else if (strcmp(arg, "-nice") == 0) {
             i++;
             if (Tcl_GetIntFromObj(interp, objv[i], &oniceval) != TCL_OK) {
@@ -156,6 +172,13 @@ int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
         }
     }
 
+    /* print debug command info */
+    if (path) {
+        ui_debug(interp, "system -W %s: %s", path, cmdstring);
+    } else {
+        ui_debug(interp, "system: %s", cmdstring);
+    }
+
     /* check if and how we should use sandbox-exec */
     sandbox = check_sandboxing(interp, &sandbox_exec_path, &profilestr);
 
@@ -163,25 +186,47 @@ int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
      * Fork a child to run the command, in a popen() like fashion -
      * popen() itself is not used because stderr is also desired.
      */
-    if (pipe(fdset) != 0) {
-        Tcl_SetResult(interp, strerror(errno), TCL_STATIC);
-        return TCL_ERROR;
+    if (odup) {
+        if (pipe(fdset) != 0) {
+            Tcl_SetResult(interp, strerror(errno), TCL_STATIC);
+            return TCL_ERROR;
+        }
     }
 
+    /*
+     * Custom handlers for SIGINT and SIGQUIT to detect aborts
+     *
+     * system(3) also blocks SIGCHLD during the execution of the program.
+     * However, that would make our wait(2) call more complicated. As we are
+     * not relying on delivery of SIGCHLD anywhere else, we just do not change
+     * the handling here at all.
+     */
+    struct sigaction sa, old_sa_int, old_sa_quit;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_sigint;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    interrupted_by = 0;
+    sigaction(SIGINT, &sa, &old_sa_int);
+    sigaction(SIGQUIT, &sa, &old_sa_quit);
+
+    /* fork a new process */
     pid = fork();
     switch (pid) {
     case -1: /* error */
         Tcl_SetResult(interp, strerror(errno), TCL_STATIC);
         return TCL_ERROR;
-        break;
+        /*NOTREACHED*/
     case 0: /* child */
-        close(fdset[0]);
+        if (odup) {
+            close(fdset[0]);
 
-        if ((nullfd = open(_PATH_DEVNULL, O_RDONLY)) == -1)
-            _exit(1);
-        dup2(nullfd, STDIN_FILENO);
-        dup2(fdset[1], STDOUT_FILENO);
-        dup2(fdset[1], STDERR_FILENO);
+            if ((nullfd = open(_PATH_DEVNULL, O_RDONLY)) == -1)
+                _exit(1);
+            dup2(nullfd, STDIN_FILENO);
+            dup2(fdset[1], STDOUT_FILENO);
+            dup2(fdset[1], STDERR_FILENO);
+        }
         /* drop the controlling terminal if requested */
         if (osetsid) {
             if (setsid() == -1)
@@ -189,7 +234,7 @@ int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
         }
         /* change scheduling priority if requested */
         if (oniceval != INT_MAX) {
-            if (setpriority(PRIO_PROCESS, getpid(), oniceval) != 0) {
+            if (setpriority(PRIO_PROCESS, (id_t)getpid(), oniceval) != 0) {
                 /* ignore failure, just continue */
             }
         }
@@ -208,6 +253,10 @@ int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
             }
         }
 
+        /* restore original signal handling */
+        sigaction(SIGINT, &old_sa_int, NULL);
+        sigaction(SIGQUIT, &old_sa_quit, NULL);
+
         /* XXX ugly string constants */
         if (sandbox) {
             args[0] = "sandbox-exec";
@@ -217,113 +266,129 @@ int SystemCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
             args[4] = "-c";
             args[5] = cmdstring;
             args[6] = NULL;
-            execve(sandbox_exec_path, args, environ);
+            sip_copy_execve(sandbox_exec_path, args, environ);
         } else {
             args[0] = "sh";
             args[1] = "-c";
             args[2] = cmdstring;
             args[3] = NULL;
-            execve("/bin/sh", args, environ);
+            sip_copy_execve("/bin/sh", args, environ);
         }
-        _exit(1);
-        break;
+        exit(128);
+        /*NOTREACHED*/
     default: /* parent */
         break;
     }
 
-    close(fdset[1]);
+    if (odup) {
+        close(fdset[1]);
 
-    /* read from simulated popen() pipe */
-    read_failed = 0;
-    pos = 0;
-    memset(circbuf, 0, sizeof(circbuf));
-    pdes = fdopen(fdset[0], "r");
-    if (pdes) {
-        while ((buf = fgetln(pdes, &linelen)) != NULL) {
-            char *sbuf;
-            int slen;
-    
-            /*
-             * Allocate enough space to insert a terminating
-             * '\0' if the line is not terminated with a '\n'
-             */
-            if (buf[linelen - 1] == '\n')
-                slen = linelen;
-            else
-                slen = linelen + 1;
-    
-            if (circbuf[pos].len == 0)
-                sbuf = malloc(slen);
-            else {
-                sbuf = realloc(circbuf[pos].line, slen);
+        /* read from simulated popen() pipe */
+        read_failed = 0;
+        pos = 0;
+        memset(circbuf, 0, sizeof(circbuf));
+        pdes = fdopen(fdset[0], "r");
+        if (pdes) {
+            while ((buf = fgetln(pdes, &linelen)) != NULL) {
+                char *sbuf;
+                size_t slen;
+
+                /*
+                * Allocate enough space to insert a terminating
+                * '\0' if the line is not terminated with a '\n'
+                */
+                if (buf[linelen - 1] == '\n')
+                    slen = linelen;
+                else
+                    slen = linelen + 1;
+
+                if (circbuf[pos].len == 0)
+                    sbuf = malloc(slen);
+                else {
+                    sbuf = realloc(circbuf[pos].line, slen);
+                }
+
+                if (sbuf == NULL) {
+                    read_failed = 1;
+                    break;
+                }
+
+                memcpy(sbuf, buf, linelen);
+                /* terminate line with '\0',replacing '\n' if it exists */
+                sbuf[slen - 1] = '\0';
+
+                circbuf[pos].line = sbuf;
+                circbuf[pos].len = slen;
+
+                if (pos++ == CBUFSIZ - 1) {
+                    pos = 0;
+                }
+
+                ui_info(interp, "%s", sbuf);
             }
-    
-            if (sbuf == NULL) {
-                read_failed = 1;
-                break;
-            }
-    
-            memcpy(sbuf, buf, linelen);
-            /* terminate line with '\0',replacing '\n' if it exists */
-            sbuf[slen - 1] = '\0';
-    
-            circbuf[pos].line = sbuf;
-            circbuf[pos].len = slen;
-    
-            if (pos++ == CBUFSIZ - 1) {
-                pos = 0;
-            }
-    
-            if (ui_info(interp, sbuf) != TCL_OK) {
-                read_failed = 1;
-                break;
-            }
+            fclose(pdes);
+        } else {
+            read_failed = 1;
+            Tcl_SetResult(interp, strerror(errno), TCL_STATIC);
         }
-        fclose(pdes);
-    } else {
-        read_failed = 1;
-        Tcl_SetResult(interp, strerror(errno), TCL_STATIC);
     }
 
     status = TCL_ERROR;
 
-    if (wait(&ret) == pid && WIFEXITED(ret) && !read_failed) {
+    if (wait(&ret) == pid && (WIFEXITED(ret) || WIFSIGNALED(ret)) && !read_failed) {
         /* Normal exit, and reading from the pipe didn't fail. */
-        if (WEXITSTATUS(ret) == 0) {
+        if (WIFEXITED(ret) && WEXITSTATUS(ret) == 0) {
             status = TCL_OK;
         } else {
-            char *errorstr;
-            size_t errorstrlen;
             Tcl_Obj* errorCode;
 
             /* print error */
-            /* get buffer large enough for additional message or the error code */
-            errorstrlen = strlen(cmdstring) + strlen("Command failed: ") + 12;
-            errorstr = malloc(errorstrlen);
-            if (errorstr) {
-                snprintf(errorstr, errorstrlen, "Command failed: %s", cmdstring);
-                ui_info(interp, errorstr);
-                snprintf(errorstr, errorstrlen, "Exit code: %d", WEXITSTATUS(ret));
-                ui_info(interp, errorstr);
-                free(errorstr);
+            ui_info(interp, "Command failed: %s", cmdstring);
+            if (WIFEXITED(ret)) {
+                ui_info(interp, "Exit code: %d", WEXITSTATUS(ret));
+            } else if(WIFSIGNALED(ret)) {
+                ui_info(interp, "Killed by signal: %d", WTERMSIG(ret));
             }
 
-            /* set errorCode [list CHILDSTATUS <pid> <code>] */
             errorCode = Tcl_NewListObj(0, NULL);
-            Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj("CHILDSTATUS", -1));
-            Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewIntObj(pid));
-            Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewIntObj(WEXITSTATUS(ret)));
-            Tcl_SetObjErrorCode(interp, errorCode);
-
-            Tcl_SetObjResult(interp, Tcl_NewStringObj("command execution failed", -1));
+            if (interrupted_by != 0) {
+                /* set errorCode [list POSIX SIG <SIGNAME> <signal descripton>] */
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj("POSIX", -1));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj("SIG", -1));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj(Tcl_SignalId(interrupted_by), -1));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj(Tcl_SignalMsg(interrupted_by), -1));
+                Tcl_SetObjErrorCode(interp, errorCode);
+                Tcl_SetObjResult(interp, Tcl_NewStringObj("interrupted by signal", -1));
+            } else if (WIFEXITED(ret)) {
+                /* set errorCode [list CHILDSTATUS <pid> <code>] */
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj("CHILDSTATUS", -1));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewIntObj(pid));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewIntObj(WEXITSTATUS(ret)));
+                Tcl_SetObjErrorCode(interp, errorCode);
+                Tcl_SetObjResult(interp, Tcl_NewStringObj("command execution failed", -1));
+            } else if (WIFSIGNALED(ret)) {
+                /* set errorCode [list CHILDKILLED <pid> <SIGNAME> <signal descripton>] */
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj("CHILDKILLED", -1));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewIntObj(pid));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj(Tcl_SignalId(WTERMSIG(ret)), -1));
+                Tcl_ListObjAppendElement(interp, errorCode, Tcl_NewStringObj(Tcl_SignalMsg(WTERMSIG(ret)), -1));
+                Tcl_SetObjErrorCode(interp, errorCode);
+                Tcl_SetObjResult(interp, Tcl_NewStringObj("command execution failed", -1));
+            }
         }
     }
 
-    /* Cleanup. */
-    close(fdset[0]);
-    for (fline = 0; fline < CBUFSIZ; fline++) {
-        if (circbuf[fline].len != 0) {
-            free(circbuf[fline].line);
+    /* restore original signal handling */
+    sigaction(SIGINT, &old_sa_int, NULL);
+    sigaction(SIGQUIT, &old_sa_quit, NULL);
+
+    if (odup) {
+        /* Cleanup. */
+        close(fdset[0]);
+        for (fline = 0; fline < CBUFSIZ; fline++) {
+            if (circbuf[fline].len != 0) {
+                free(circbuf[fline].line);
+            }
         }
     }
 

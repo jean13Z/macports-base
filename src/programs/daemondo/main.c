@@ -116,6 +116,7 @@ CFTimeInterval      restartHysteresis   = 5.0;      // Default hysteresis is 5 s
 int				    restartWait		   	= 3;      	// Default wait during restart is 3 seconds
 
 
+__printflike(1, 2)
 void
 LogMessage(const char* fmt, ...)
 {
@@ -514,7 +515,7 @@ Exec(const char* const argv[], int sync)
             LogMessage("Unable to launch process %s.\n", argv[0]);
             _exit(1);
         }
-        break;
+        /*NOTREACHED*/
     
     case -1:
         // error starting child process
@@ -1226,7 +1227,7 @@ main(int argc, char* argv[])
         case ':':
             printf("Option error: missing argument for option %s\n", longopts[optindex].name);
             exit(1);
-            break;
+            /*NOTREACHED*/
             
         case 's':
             if (startArgs)
@@ -1326,7 +1327,7 @@ main(int argc, char* argv[])
         case 'h':
             DoHelp();
             exit(0);
-            break;
+            /*NOTREACHED*/
             
         case 'l':
             if (label != NULL)

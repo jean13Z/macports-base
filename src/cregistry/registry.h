@@ -4,7 +4,7 @@
  * $Id$
  *
  * Copyright (c) 2007 Chris Pickel <sfiera@macports.org>
- * Copyright (c) 2012 The MacPorts Project
+ * Copyright (c) 2012, 2014 The MacPorts Project
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -37,13 +37,21 @@
 #include <sqlite3.h>
 #include <tcl.h>
 
-#define REG_NOT_FOUND       "registry::not-found"
-#define REG_INVALID         "registry::invalid"
-#define REG_CONSTRAINT      "registry::constraint"
-#define REG_SQLITE_ERROR    "registry::sqlite-error"
-#define REG_MISUSE          "registry::misuse"
-#define REG_CANNOT_INIT     "registry::cannot-init"
-#define REG_ALREADY_ACTIVE  "registry::already-active"
+#define REG_NOT_FOUND       (registry_err_not_found)
+#define REG_INVALID         (registry_err_invalid)
+#define REG_CONSTRAINT      (registry_err_constraint)
+#define REG_SQLITE_ERROR    (registry_err_sqlite_error)
+#define REG_MISUSE          (registry_err_misuse)
+#define REG_CANNOT_INIT     (registry_err_cannot_init)
+#define REG_ALREADY_ACTIVE  (registry_err_already_active)
+
+extern char *const registry_err_not_found;
+extern char *const registry_err_invalid;
+extern char *const registry_err_constraint;
+extern char *const registry_err_sqlite_error;
+extern char *const registry_err_misuse;
+extern char *const registry_err_cannot_init;
+extern char *const registry_err_already_active;
 
 typedef void reg_error_destructor(const char* description);
 
@@ -73,6 +81,7 @@ typedef struct {
     int status;
     Tcl_HashTable open_entries;
     Tcl_HashTable open_files;
+    Tcl_HashTable open_portgroups;
 } reg_registry;
 
 int reg_open(reg_registry** regPtr, reg_error* errPtr);
@@ -87,5 +96,9 @@ int reg_commit(reg_registry* reg, reg_error* errPtr);
 int reg_rollback(reg_registry* reg, reg_error* errPtr);
 
 int reg_vacuum(char* db_path);
+
+int reg_get_metadata(reg_registry* reg, const char* key, char** value, reg_error* errPtr);
+int reg_set_metadata(reg_registry* reg, const char* key, const char* value, reg_error* errPtr);
+int reg_del_metadata(reg_registry* reg, const char* key, reg_error* errPtr);
 
 #endif /* _CREG_H */

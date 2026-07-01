@@ -1,13 +1,9 @@
-#!/bin/sh
+#!@TCLSH@
 # -*- coding: utf-8; mode: tcl; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- vim:fenc=utf-8:filetype=tcl:et:sw=4:ts=4:sts=4
-# Run the Tcl interpreter \
-exec @TCLSH@ "$0" "$@"
-
 # Traverse through all ports, creating an index and archiving port directories
 # if requested
 # $Id$
 
-source [file join "@macports_tcl_dir@" macports1.0 macports_fastload.tcl]
 package require macports
 package require Pextlib
 
@@ -16,7 +12,7 @@ set full_reindex 0
 set stats(total) 0
 set stats(failed) 0
 set stats(skipped) 0
-array set ui_options        [list]
+array set ui_options        [list ports_no_old_index_warning 1]
 array set global_options    [list]
 array set global_variations [list]
 set port_options            [list]
@@ -34,30 +30,92 @@ proc print_usage args {
     puts "-p:\tPretend to be on another platform"
 }
 
+proc _read_index {idx} {
+    global qindex oldfd
+
+    set offset $qindex($idx)
+    seek $oldfd $offset
+    gets $oldfd line
+
+    set name [lindex $line 0]
+    set len  [lindex $line 1]
+    set line [read $oldfd [expr {$len - 1}]]
+
+    return [list $name $len $line]
+}
+
+proc _write_index {name len line} {
+    global fd
+
+    puts $fd [list $name $len]
+    puts $fd $line
+}
+
+proc _write_index_from_portinfo {portinfoname {is_subport no}} {
+    global keepkeys
+
+    upvar $portinfoname portinfo
+
+    array set keep_portinfo {}
+    foreach key [array names keepkeys] {
+        # filter keys
+        if {![info exists portinfo($key)]} {
+            continue
+        }
+
+        # copy values we want to keep
+        set keep_portinfo($key) $portinfo($key)
+    }
+
+    # if this is not a subport, add the "subports" key
+    if {!$is_subport && [info exists portinfo(subports)]} {
+        set keep_portinfo(subports) $portinfo(subports)
+    }
+
+    set output [array get keep_portinfo]
+    set len [expr {[string length $output] + 1}]
+    _write_index $portinfo(name) $len $output
+}
+
+proc _open_port {portinfo_name portdir absportdir port_options_name {subport {}}} {
+    global save_prefix
+    upvar $portinfo_name portinfo
+    upvar $port_options_name port_options
+
+    if {$subport eq {}} {
+        set interp [mportopen file://$absportdir $port_options]
+    } else {
+        set interp [mportopen file://$absportdir [concat $port_options subport $subport]]
+    }
+
+    if {[array exists portinfo]} {
+        array unset portinfo
+    }
+    array set portinfo [mportinfo $interp]
+    mportclose $interp
+
+    set portinfo(portdir) $portdir
+}
+
 proc pindex {portdir} {
     global target oldfd oldmtime newest qindex fd directory outdir stats full_reindex \
            ui_options port_options save_prefix keepkeys
 
+    set qname [string tolower [file tail $portdir]]
+    set absportdir [file join $directory $portdir]
+    set portfile [file join $absportdir Portfile]
     # try to reuse the existing entry if it's still valid
-    if {$full_reindex != "1" && [info exists qindex([string tolower [file tail $portdir]])]} {
-        try {
-            set mtime [file mtime [file join $directory $portdir Portfile]]
+    if {$full_reindex != 1 && [info exists qindex($qname)]} {
+        try -pass_signal {
+            set mtime [file mtime $portfile]
             if {$oldmtime >= $mtime} {
-                set offset $qindex([string tolower [file tail $portdir]])
-                seek $oldfd $offset
-                gets $oldfd line
-                set name [lindex $line 0]
-                set len [lindex $line 1]
-                set line [read $oldfd $len]
+                lassign [_read_index $qname] name len line
+                _write_index $name $len $line
+                incr stats(skipped)
 
                 if {[info exists ui_options(ports_debug)]} {
                     puts "Reusing existing entry for $portdir"
                 }
-
-                puts $fd [list $name $len]
-                puts -nonewline $fd $line
-
-                incr stats(skipped)
 
                 # also reuse the entries for its subports
                 array set portinfo $line
@@ -65,88 +123,54 @@ proc pindex {portdir} {
                     return
                 }
                 foreach sub $portinfo(subports) {
-                    set offset $qindex([string tolower $sub])
-                    seek $oldfd $offset
-                    gets $oldfd line
-                    set name [lindex $line 0]
-                    set len [lindex $line 1]
-                    set line [read $oldfd $len]
-    
-                    puts $fd [list $name $len]
-                    puts -nonewline $fd $line
-    
+                    _write_index {*}[_read_index [string tolower $sub]]
                     incr stats(skipped)
                 }
 
                 return
             }
-        } catch {*} {
-            ui_warn "failed to open old entry for ${portdir}, making a new one"
+        } catch {{*} eCode eMessage} {
+            ui_warn "Failed to open old entry for ${portdir}, making a new one"
+            if {[info exists ui_options(ports_debug)]} {
+                puts "$::errorInfo"
+            }
         }
     }
 
     incr stats(total)
-    set prefix {\${prefix}}
-    if {[catch {set interp [mportopen file://[file join $directory $portdir] $port_options]} result]} {
-        puts stderr "Failed to parse file $portdir/Portfile: $result"
-        # revert the prefix.
-        set prefix $save_prefix
-        incr stats(failed)
-    } else {
-        # revert the prefix.
-        set prefix $save_prefix
-        array set portinfo [mportinfo $interp]
-        mportclose $interp
-        set portinfo(portdir) $portdir
+    try -pass_signal {
+        _open_port portinfo $portdir $absportdir port_options
         puts "Adding port $portdir"
 
-        foreach availkey [array names portinfo] {
-            # store list of subports for top-level ports only
-            if {![info exists keepkeys($availkey)] && $availkey != "subports"} {
-                unset portinfo($availkey)
-            }
-        }
-        set output [array get portinfo]
-        set len [expr [string length $output] + 1]
-        puts $fd [list $portinfo(name) $len]
-        puts $fd $output
-        set mtime [file mtime [file join $directory $portdir Portfile]]
+        _write_index_from_portinfo portinfo
+        set mtime [file mtime $portfile]
         if {$mtime > $newest} {
             set newest $mtime
         }
+
         # now index this portfile's subports (if any)
         if {![info exists portinfo(subports)]} {
             return
         }
         foreach sub $portinfo(subports) {
             incr stats(total)
-            set prefix {\${prefix}}
-            if {[catch {set interp [mportopen file://[file join $directory $portdir] [concat $port_options subport $sub]]} result]} {
-                puts stderr "Failed to parse file $portdir/Portfile with subport '${sub}': $result"
-                set prefix $save_prefix
-                incr stats(failed)
-            } else {
-                set prefix $save_prefix
-                array unset portinfo
-                array set portinfo [mportinfo $interp]
-                mportclose $interp
-                set portinfo(portdir) $portdir
+            try -pass_signal {
+                _open_port portinfo $portdir $absportdir port_options $sub
                 puts "Adding subport $sub"
-                foreach availkey [array names portinfo] {
-                    if {![info exists keepkeys($availkey)]} {
-                        unset portinfo($availkey)
-                    }
-                }
-                set output [array get portinfo]
-                set len [expr [string length $output] + 1]
-                puts $fd [list $portinfo(name) $len]
-                puts $fd $output
+
+                _write_index_from_portinfo portinfo yes
+            } catch {{*} eCode eMessage} {
+                puts stderr "Failed to parse file $portdir/Portfile with subport '${sub}': $eMessage"
+                incr stats(failed)
             }
         }
+    } catch {{*} eCode eMessage} {
+        puts stderr "Failed to parse file $portdir/Portfile: $eMessage"
+        incr stats(failed)
     }
 }
 
-if {[expr $argc > 8]} {
+if {$argc > 8} {
     print_usage
     exit 1
 }
@@ -155,23 +179,23 @@ for {set i 0} {$i < $argc} {incr i} {
     set arg [lindex $argv $i]
     switch -regex -- $arg {
         {^-.+} {
-            if {$arg == "-d"} { # Turn on debug output
+            if {$arg eq "-d"} { # Turn on debug output
                 set ui_options(ports_debug) yes
-            } elseif {$arg == "-o"} { # Set output directory
+            } elseif {$arg eq "-o"} { # Set output directory
                 incr i
                 set outdir [file join [pwd] [lindex $argv $i]]
-            } elseif {$arg == "-p"} { # Set platform
+            } elseif {$arg eq "-p"} { # Set platform
                 incr i
                 set platlist [split [lindex $argv $i] _]
                 set os_platform [lindex $platlist 0]
                 set os_major [lindex $platlist 1]
                 set os_arch [lindex $platlist 2]
-                if {$os_platform == "macosx"} {
+                if {$os_platform eq "macosx"} {
                     lappend port_options os.subplatform $os_platform os.universal_supported yes
                     set os_platform darwin
                 }
                 lappend port_options os.platform $os_platform os.major $os_major os.arch $os_arch
-            } elseif {$arg == "-f"} { # Completely rebuild index
+            } elseif {$arg eq "-f"} { # Completely rebuild index
                 set full_reindex 1
             } else {
                 puts stderr "Unknown option: $arg"
@@ -235,20 +259,35 @@ set tempportindex [mktemp "/tmp/mports.portindex.XXXXXXXX"]
 set fd [open $tempportindex w]
 set save_prefix ${macports::prefix}
 foreach key {categories depends_fetch depends_extract depends_build \
-             depends_lib depends_run description epoch homepage \
+             depends_lib depends_run depends_test description epoch homepage \
              long_description maintainers name platforms revision variants \
-             version portdir replaced_by license installs_libs} {
+             version portdir replaced_by license installs_libs conflicts} {
     set keepkeys($key) 1
 }
-mporttraverse pindex $directory
-if {[info exists oldfd]} {
-    close $oldfd
+
+set exit_fail 0
+try {
+    mporttraverse pindex $directory
+} catch {{POSIX SIG SIGINT} eCode eMessage} {
+    puts stderr "SIGINT received, terminating."
+    set exit_fail 1
+} catch {{POSIX SIG SIGTERM} eCode eMessage} {
+    puts stderr "SIGTERM received, terminating."
+    set exit_fail 1
+} finally {
+    if {[info exists oldfd]} {
+        close $oldfd
+    }
+    close $fd
 }
-close $fd
+if {$exit_fail} {
+    exit 1
+}
+
 file rename -force $tempportindex $outpath
 file mtime $outpath $newest
 mports_generate_quickindex $outpath
 puts "\nTotal number of ports parsed:\t$stats(total)\
-      \nPorts successfully parsed:\t[expr $stats(total) - $stats(failed)]\
+      \nPorts successfully parsed:\t[expr {$stats(total) - $stats(failed)}]\
       \nPorts failed:\t\t\t$stats(failed)\
       \nUp-to-date ports skipped:\t$stats(skipped)\n"

@@ -32,6 +32,10 @@
 # standard package load
 package provide port 1.0
 
+# catch wrapper shared with macports1.0
+# aliasing it in doesn't work right because of uplevel use
+package require mpcommon 1.0
+
 # Provide a callback registration mechanism for port subpackages. This needs to
 # be done _before_ loading the subpackages.
 namespace eval port {
@@ -82,6 +86,7 @@ package require portlivecheck 1.0
 package require portmirror 1.0
 package require portload 1.0
 package require portunload 1.0
+package require portreload 1.0
 
 package require portdistfiles 1.0
 package require portsandbox 1.0

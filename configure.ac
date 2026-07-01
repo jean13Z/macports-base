@@ -16,6 +16,7 @@ AC_SUBST(MACPORTS_VERSION)
 
 # Check user PATH for MP paths, and remove as necessary.
 MP_PATH_SCAN
+MP_FLAGS_SCAN
 
 AC_PATH_PROG(SW_VERS, sw_vers)
 AC_PATH_PROG(DEFAULTS, defaults)
@@ -28,15 +29,15 @@ if test "x$SW_VERS" != "x"; then
 fi
 
 case "$MACOSX_VERSION" in
-  10.0*|10.1*|10.2*|10.3*)
+  10.0*|10.1|10.1.*|10.2*|10.3*)
     AC_MSG_ERROR([This version of Mac OS X is not supported
                   Please upgrade at http://store.apple.com/])
     ;;
-  10.4.[[0-9]]|10.4.10|10.5.[[0-7]]|10.6.[[0-7]]|10.7.[[0-4]]|10.8.[[0-3]])
+  10.4.[[0-9]]|10.4.10|10.5.[[0-7]]|10.6.[[0-7]]|10.7.[[0-4]]|10.8.[[0-4]]|10.9.[[0-4]]|10.10.[[0-3]])
     AC_MSG_WARN([This version of Mac OS X is out of date])
     AC_MSG_WARN([Please run Software Update to update it])
     ;;
-  10.4*|10.5*|10.6*|10.7*|10.8*)
+  10.4*|10.5*|10.6*|10.7*|10.8*|10.9*|10.10*)
     dnl Supported version
     ;;
   *)
@@ -86,7 +87,7 @@ case "$XCODE_VERSION" in
     AC_MSG_WARN([This version of Xcode Tools is out of date])
     AC_MSG_WARN([Please consider upgrading as some ports fail compiling])
     ;;
-  2.*|3.*|4.*)
+  2.*|3.*|4.*|5.*|6.*)
     dnl Supported version
     ;;
   *)
@@ -94,14 +95,40 @@ case "$XCODE_VERSION" in
 esac
 
 # Checks for programs.
-AC_PROG_CC
+AC_PROG_CC([clang cc gcc])
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
-AC_PROG_OBJC
+AC_PROG_OBJC([clang cc gcc])
 
+# Check for user-supplied paths before searching
+
+dnl Beware of conflicts between the variables you set and any tools executed in
+dnl the configure context. Some tools interpret an environment variable with
+dnl their own name as default flags and will fail if it is set to a path. For
+dnl example, these include BZIP2 and GZIP, which is the reason why they are
+dnl named with a _BIN suffix here.
+MP_TOOL_PATH(BSDMAKE, [bsdmake/pmake])
+MP_TOOL_PATH(BZIP2_BIN, [bzip2])
+MP_TOOL_PATH(CVS, [cvs])
+MP_TOOL_PATH(GNUMAKE, [gnumake])
+MP_TOOL_PATH(GNUTAR, [gnutar])
+MP_TOOL_PATH(LZMA, [lzma])
+MP_TOOL_PATH(MAKE, [make])
+MP_TOOL_PATH(MTREE, [mtree])
+MP_TOOL_PATH(OPEN, [open])
+MP_TOOL_PATH(OPENSSL, [openssl])
+MP_TOOL_PATH(RSYNC, [rsync])
+MP_TOOL_PATH(SED, [sed])
+MP_TOOL_PATH(SVN, [svn])
+MP_TOOL_PATH(SWIG, [swig])
+MP_TOOL_PATH(TAR, [tar])
+MP_TOOL_PATH(XAR, [xar])
+MP_TOOL_PATH(XZ, [xz])
+
+# Search for tool paths. Any set above (via --with-pkg=PATH) will be retained
 AC_PATH_PROGS(BSDMAKE, [bsdmake pmake], [])
-AC_PATH_PROG(BZIP2, [bzip2], [])
+AC_PATH_PROG(BZIP2_BIN, [bzip2], [])
 AC_PATH_PROG(BZR, [bzr], [])
 AC_PATH_PROG(CHOWN, [chown], [], [$PATH:/usr/sbin])
 AC_PATH_PROG(CP, [cp], [])
@@ -109,14 +136,14 @@ AC_PATH_PROG(CPIO, [cpio], [])
 AC_PATH_PROG(CVS, [cvs], [])
 AC_PATH_PROG(DIFF, [diff], [])
 AC_PATH_PROG(DSCL, [dscl], [])
-AC_PATH_PROG(DSEDITGROUP, [dseditgroup], [])
+AC_PATH_PROG(DSEDITGROUP, [dseditgroup], [], [$PATH:/usr/sbin])
 AC_PATH_PROG(FILE, [file], [])
 AC_PATH_PROG(FIND, [find], [])
 AC_PATH_PROG(GIT, [git], [])
-AC_PATH_PROGS(GNUMAKE, [gnumake gmake], [], [$PATH:/usr/local/bin])
-AC_PATH_PROGS(GNUPATCH, [gnupatch gpatch], [], [$PATH:/usr/local/bin])
-AC_PATH_PROGS(GNUTAR, [gnutar gtar], [], [$PATH:/usr/local/bin])
-AC_PATH_PROG(GZIP, [gzip], [])
+AC_PATH_PROGS(GNUMAKE, [gnumake gmake], [])
+AC_PATH_PROGS(GNUPATCH, [gnupatch gpatch], [])
+AC_PATH_PROGS(GNUTAR, [gnutar gtar], [])
+AC_PATH_PROG(GZIP_BIN, [gzip], [])
 AC_PATH_PROG(HDIUTIL, [hdiutil], [])
 AC_PATH_PROG(HG, [hg], [])
 AC_PATH_PROG(LAUNCHCTL, [launchctl], [])
@@ -124,10 +151,11 @@ AC_PATH_PROG(LIPO, [lipo], [])
 AC_PATH_PROG(LSBOM, [lsbom], [])
 AC_PATH_PROG(LZMA, [lzma], [])
 AC_PATH_PROG(MAKE, [make])
+AC_PATH_PROG(MAN, [man])
 AC_PATH_PROG(MDFIND, [mdfind], [])
 AC_PATH_PROG(MDLS, [mdls], [])
 AC_PATH_PROG(MKBOM, [mkbom], [])
-AC_PATH_PROG(MTREE, [mtree], [], [$PATH:/usr/sbin])
+AC_PATH_PROGS(MTREE, [mtree fmtree], [], [$PATH:/usr/sbin])
 AC_PATH_PROG(OPEN, [open], [])
 AC_PATH_PROG(OPENSSL, [openssl], [])
 AC_PATH_PROG(PATCH, [patch], [])
@@ -137,7 +165,7 @@ AC_PATH_PROG(RSYNC, [rsync], [])
 AC_PATH_PROG(SANDBOX_EXEC, [sandbox-exec], [], [/usr/bin])
 AC_PATH_PROG(SED, [sed])
 AC_PATH_PROG(SVN, [svn], [])
-AC_PATH_PROG(SWIG, [swig], [], [$PATH:/usr/local/bin])
+AC_PATH_PROG(SWIG, [swig], [])
 AC_PATH_PROG(TAR, [tar])
 AC_PATH_PROG(UNZIP, [unzip])
 AC_PATH_PROG(XAR, [xar], [])
@@ -146,26 +174,7 @@ AC_PATH_PROG(XCRUN, [xcrun], [])
 AC_PATH_PROG(XZ, [xz], [])
 AC_PATH_PROG(ZIP, [zip])
 
-AC_CHECK_PROG(HAVE_LAUNCHD, [launchd], [yes], [])
-
-# Define some precious variables allowing user to override PATH for some programs
-AC_ARG_VAR(BSDMAKE, [path to bsdmake/pmake command])
-AC_ARG_VAR(BZIP2, [path to bzip2 command])
-AC_ARG_VAR(CVS, [path to cvs command])
-AC_ARG_VAR(GNUMAKE, [path to gnumake command])
-AC_ARG_VAR(GNUTAR, [path to gnutar command])
-AC_ARG_VAR(LZMA, [path to lzma command])
-AC_ARG_VAR(MAKE, [path to make command])
-AC_ARG_VAR(MTREE, [path to mtree command])
-AC_ARG_VAR(OPEN, [path to open command])
-AC_ARG_VAR(OPENSSL, [path to openssl command])
-AC_ARG_VAR(RSYNC, [path to rsync command])
-AC_ARG_VAR(SED, [path to sed command])
-AC_ARG_VAR(SVN, [path to svn command])
-AC_ARG_VAR(SWIG, [path to swig command])
-AC_ARG_VAR(TAR, [path to tar command])
-AC_ARG_VAR(XAR, [path to xar command])
-AC_ARG_VAR(XZ, [path to xz command])
+AC_CHECK_PROG(HAVE_LAUNCHD, [launchd], [yes], [], [/sbin])
 
 if test "x$MTREE" = "x"; then
     AC_MSG_ERROR([mtree not found])
@@ -237,14 +246,16 @@ MP_UNIVERSAL_OPTIONS
 AC_HEADER_STDC
 AC_HEADER_DIRENT
 AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([limits.h paths.h sys/file.h crt_externs.h fcntl.h sys/fcntl.h sys/cdefs.h err.h sys/socket.h \
-	sys/event.h sys/sysctl.h readline/readline.h readline/history.h pwd.h sys/paths.h utime.h])
-
-INCLUDES="-I.. -I. $INCLUDES"
+AC_CHECK_HEADERS([crt_externs.h err.h fcntl.h libkern/OSAtomic.h libproc.h limits.h paths.h pwd.h \
+	readline/history.h readline/readline.h spawn.h sys/cdefs.h sys/event.h sys/fcntl.h sys/file.h \
+	sys/paths.h sys/socket.h sys/sysctl.h utime.h])
 
 # Checks for library functions.
-AC_CHECK_FUNCS([bzero memset fgetln lockf flock setmode strcasecmp strncasecmp strlcpy strlcat copyfile clearenv sysctlbyname kqueue])
-AC_SUBST(ac_cv_func_strlcat)
+AC_CHECK_FUNCS([OSAtomicCompareAndSwap32 OSAtomicCompareAndSwap64 \
+	OSAtomicCompareAndSwapPtr __getdirentries64 bzero clearenv copyfile fgetln \
+	flock fls kqueue lockf memset posix_spawn setmode strcasecmp strlcat \
+	strlcpy strncasecmp sysctlbyname])
+AC_SUBST([ac_cv_func_strlcat])
 
 MP_CHECK_READLINK_IS_P1003_1A
 
@@ -272,23 +283,8 @@ AC_SUBST(READLINE_LIBS)
 AC_DEFINE([MIN_USABLE_UID], [500], [Lowest non-system-reserved UID.])
 AC_DEFINE([MIN_USABLE_GID], [500], [Lowest non-system-reserved GID.])
 
-# Load tclConfig.sh
-SC_PATH_TCLCONFIG
-SC_LOAD_TCLCONFIG
-
-# Check for Tcl public headers
-dnl XXX	 hardwire CYGPATH (CYGPATH must be set for SC_PUBLIC_TCL_HEADERS)
-CYGPATH=echo
-SC_PUBLIC_TCL_HEADERS
-
-# Check for tclsh binary
-MP_PROG_TCLSH
-
-# Check for Tcl package path
-MP_TCL_PACKAGE_DIR
-
-# Check if thread is enabled.
-MP_TCL_THREAD_SUPPORT
+# Substitute platform for base compatibility check
+MP_PLATFORM
 
 ## libcurl
 MP_LIBCURL_FLAGS
@@ -301,69 +297,31 @@ if test "x${mp_sqlite_version_ge_3003011}" = "xno"; then
 	AC_DEFINE([sqlite3_prepare_v2], [sqlite3_prepare], [define sqlite3_prepare to sqlite_prepare_v2 if the latter is not available])
 fi
 
-# Determine if we need to install some bundled packages
-OUR_INCLUDED_PACKAGES=
-
-## Thread package.
-AC_ARG_WITH(
-		included-tclthread,
-		AS_HELP_STRING([--with-included-tclthread],
-			[install included Thread package.]),
-		[with_included_tclthread=$withval],
-		[with_included_tclthread="unspecified"])
-
-# Check if thread package is already installed.
-if test "x$with_included_tclthread" = "xunspecified" ; then
-	MP_TCL_PACKAGE(
-		[Thread],
-		[AC_MSG_RESULT([yes]); with_included_tclthread=no],
-		[AC_MSG_RESULT([no]); with_included_tclthread=yes])
-fi
-
-# If thread package isn't installed, configure and install thread package.
-if test "$with_included_tclthread" = "yes"; then
-	OUR_INCLUDED_PACKAGES="$OUR_INCLUDED_PACKAGES thread2.6"
-	AC_CONFIG_SUBDIRS([src/thread2.6])
-	# Extract thread package
-	(cd src/; gzip -d < thread2.6.tar.gz | tar xf -)
-	# Patch thread package (so thread2.6 is the vanilla distribution directory)
-	patch -p0 < src/thread2.6.diff
-fi
-
-# Allows building of shared libraries
-SC_ENABLE_SHARED
-
-# Pull compiler / linker values from tclConfig.sh
-LDFLAGS_DEBUG=${TCL_LDFLAGS_DEBUG}
-LDFLAGS_OPTIMIZE=${TCL_LDFLAGS_OPTIMIZE}
-SHLIB_LD=${TCL_SHLIB_LD}
-STLIB_LD=${TCL_STLIB_LD}
-SHLIB_CFLAGS=${TCL_SHLIB_CFLAGS}
-SHLIB_SUFFIX=${TCL_SHLIB_SUFFIX}
-
-AC_SUBST(INCLUDES)
-AC_SUBST(STLIB_LD)
-AC_SUBST(SHLIB_LD)
-AC_SUBST(SHLIB_CFLAGS)
-AC_SUBST(SHLIB_LDFLAGS)
-AC_SUBST(SHLIB_SUFFIX)
-AC_SUBST(TCL_DEFS)
-AC_SUBST(TCL_STUB_LIB_SPEC)
-AC_SUBST(TCL_CC)
-AC_SUBST(OUR_INCLUDED_PACKAGES)
+# check whether trace mode is supported on this platform
+MP_TRACEMODE_SUPPORT
 
 # misc variables that need to be expanded for substitution into tcl
-
 oldprefix=$prefix
+oldexec_prefix=$exec_prefix
 if test "x$prefix" = "xNONE" ; then
    prefix=$ac_default_prefix
 fi
-
-# Check if there's an existing DP/MP install too old to upgrade
-MP_CHECK_OLDLAYOUT
-
+if test "x$exec_prefix" = "xNONE" ; then
+	exec_prefix=$prefix
+fi
 eval "prefix_expanded=$prefix"
+eval "exec_prefix_expanded=$exec_prefix"
 AC_SUBST(prefix_expanded)
+
+# Define a path where our trace mode workaround for SIP-protected binaries on
+# >= 10.11 puts copies
+eval DARWINTRACE_SIP_WORKAROUND_PATH="${prefix}/var/macports/sip-workaround"
+AC_SUBST(DARWINTRACE_SIP_WORKAROUND_PATH)
+AC_DEFINE_UNQUOTED(
+	[DARWINTRACE_SIP_WORKAROUND_PATH],
+	["$DARWINTRACE_SIP_WORKAROUND_PATH"],
+	[Absolute path to a directory used by darwintrace to copy SIP-protected files before executing])
+
 # do this twice, since there is a nested variable of
 # ${prefix} inside of ${sysconfdir}
 eval "MPCONFIGDIR_EXPANDED=$MPCONFIGDIR"
@@ -371,41 +329,141 @@ eval "MPCONFIGDIR_EXPANDED=$MPCONFIGDIR_EXPANDED"
 AC_SUBST(MPCONFIGDIR_EXPANDED)
 eval "localstatedir_expanded=$localstatedir"
 AC_SUBST(localstatedir_expanded)
-eval "macports_tcl_dir=${datadir}/macports/Tcl"
-eval "macports_tcl_dir=$macports_tcl_dir"
-AC_SUBST(macports_tcl_dir)
-
+# Compute the libexec dir for the vendor packages
+eval "macports_libexec_dir=${libexecdir}/macports"
+eval "macports_libexec_dir=$macports_libexec_dir"
 prefix=$oldprefix
+exec_prefix=$oldexec_prefix
 
-dnl man page settings (compressed, links, etc)
-dnl
-dnl SC_CONFIG_MANPAGES
+## Tcl package
+tcl_version=8.5.18
+tcl_thread_version=2.7.3
+tclx_version=8.4.1
+tcllib_version=1.17
+MP_CONFIG_TARBALL([vendor/tcl${tcl_version}-src.tar.gz], [vendor/tcl${tcl_version}/unix], [--prefix=${macports_libexec_dir} --enable-threads])
+VENDOR_TCL_SUBDIR=tcl${tcl_version}/unix
+VENDOR_TCL_INSTALL="install-binaries install-libraries"
+AC_SUBST(VENDOR_TCL_SUBDIR)
+AC_SUBST(VENDOR_TCL_INSTALL)
+
+# Set up some variables needed by MacPorts' Tcl setup
+VENDOR_DESTROOT=vendor/vendor-destroot
+AC_SUBST(VENDOR_DESTROOT)
+
+## Tcl Thread package
+# Tcl supports Threads internally, but to use threads from Tcl code we need
+# this package
+MP_CONFIG_TARBALL([vendor/thread${tcl_thread_version}.tar.gz], [vendor/thread${tcl_thread_version}], [--prefix=${macports_libexec_dir}])
+VENDOR_TCLTHREAD_SUBDIR=thread${tcl_thread_version}
+VENDOR_TCLTHREAD_INSTALL="install-binaries install-libraries"
+AC_SUBST(VENDOR_TCLTHREAD_SUBDIR)
+AC_SUBST(VENDOR_TCLTHREAD_INSTALL)
+
+## TclX package
+# TclX is required for signal handling
+MP_CONFIG_TARBALL([vendor/tclx${tclx_version}.tar.bz2], [vendor/tclx8.4], [--prefix=${macports_libexec_dir}])
+VENDOR_TCLX_SUBDIR=tclx8.4
+VENDOR_TCLX_INSTALL="install-binaries install-libraries"
+AC_SUBST(VENDOR_TCLX_SUBDIR)
+AC_SUBST(VENDOR_TCLX_INSTALL)
+
+## Tcllib package
+# Note that Tcllib needs a Tcl interpreter during installation; it will *not*
+# be the one we configure above, because that one isn't built yet. That's not
+# a problem, though -- it's only used during installation.
+MP_CONFIG_TARBALL([vendor/tcllib-${tcllib_version}.tar.gz], [vendor/tcllib-${tcllib_version}], [--prefix=${macports_libexec_dir}])
+VENDOR_TCLLIB_SUBDIR=tcllib-${tcllib_version}
+VENDOR_TCLLIB_INSTALL="install-libraries"
+AC_SUBST(VENDOR_TCLLIB_SUBDIR)
+AC_SUBST(VENDOR_TCLLIB_INSTALL)
+
+## Libsolv package
+#  Libsolv is required to support libsolv SAT Solver for
+#  dependency calculation.
+MP_CONFIG_TARBALL([vendor/libsolv.tar.gz], [vendor/libsolv], [--prefix=${macports_libexec_dir}], [--with-tcl=@VENDOR_TCL_SUBDIR@])
+VENDOR_LIBSOLV_SUBDIR=libsolv
+VENDOR_LIBSOLV_INSTALL="install"
+AC_SUBST(VENDOR_LIBSOLV_SUBDIR)
+AC_SUBST(VENDOR_LIBSOLV_INSTALL)
+
+# Load tclConfig.sh from our private install of Tcl
+AC_MSG_CHECKING([for Tcl configuration])
+TCL_BIN_DIR=`(cd vendor/tcl${tcl_version}/unix; pwd)`
+AC_MSG_RESULT([found $TCL_BIN_DIR/tclConfig.sh])
+SC_LOAD_TCLCONFIG
+SC_ENABLE_SHARED
+
+# Pull compiler/linker values from tclConfig.sh
+SHLIB_LD=${TCL_SHLIB_LD}
+STLIB_LD=${TCL_STLIB_LD}
+SHLIB_CFLAGS=${TCL_SHLIB_CFLAGS}
+SHLIB_SUFFIX=${TCL_SHLIB_SUFFIX}
+TCLSH=${TCL_EXEC_PREFIX}/bin/tclsh${TCL_VERSION}
+INTREE_TCLSH=`(cd vendor; pwd)`/tclsh
+# strip possible whitespace at the end of TCL_PACKAGE_PATH
+eval "TCL_PACKAGE_PATH=${TCL_PACKAGE_PATH}"
+
+AC_SUBST(SHLIB_LD)
+AC_SUBST(STLIB_LD)
+AC_SUBST(SHLIB_CFLAGS)
+AC_SUBST(SHLIB_SUFFIX)
+AC_SUBST(TCL_PREFIX)
+AC_SUBST(TCL_VERSION)
+AC_SUBST(TCL_PACKAGE_PATH)
+AC_SUBST(TCL_STUB_LIB_SPEC)
+AC_SUBST(TCL_SRC_DIR)
+AC_SUBST(TCL_BIN_DIR)
+AC_SUBST(TCLSH)
+AC_SUBST(INTREE_TCLSH)
+
+INCLUDES="-I.. -I. $INCLUDES"
+AC_SUBST(INCLUDES)
+
+# Check if there's an existing DP/MP install too old to upgrade
+MP_CHECK_OLDLAYOUT
 
 # Output
 AC_CONFIG_FILES([
 	Doxyfile
 	Makefile
 	Mk/macports.autoconf.mk
+	doc/Makefile
 	doc/base.mtree
 	doc/macosx.mtree
 	doc/macports.conf
 	doc/prefix.mtree
 	doc/pubkeys.conf
-	portmgr/freebsd/Makefile
+	portmgr/dmg/postflight
 	setupenv.bash
 	src/Makefile
+	src/cregistry/Makefile
+	src/darwintracelib1.0/Makefile
 	src/machista1.0/Makefile
+	src/macports1.0/Makefile
 	src/macports1.0/macports_autoconf.tcl
 	src/macports1.0/macports_test_autoconf.tcl
-	src/macports1.0/macports_fastload.tcl
+	src/mpcommon1.0/Makefile
+	src/package1.0/Makefile
 	src/package1.0/package_test_autoconf.tcl
 	src/pextlib1.0/Makefile
+	src/port/Makefile
+	src/port1.0/Makefile
 	src/port1.0/port_autoconf.tcl
 	src/port1.0/port_test_autoconf.tcl
 	src/programs/Makefile
+	src/registry2.0/Makefile
 	src/registry2.0/registry_autoconf.tcl
+	tests/Makefile
+	tests/test.tcl
+	tests/test/library.tcl
+	tests/test/trace/test.tcl
+	vendor/Makefile
 ])
 
+AC_CONFIG_FILES([vendor/tclsh], [chmod +x vendor/tclsh])
+AC_CONFIG_FILES([src/dedup_portfiles.tcl], [chmod +x src/dedup_portfiles.tcl])
+AC_CONFIG_FILES([src/images_to_archives.tcl], [chmod +x src/images_to_archives.tcl])
 AC_CONFIG_FILES([src/pkg_mkindex.sh], [chmod +x src/pkg_mkindex.sh])
+AC_CONFIG_FILES([src/upgrade_sources_conf_default.tcl], [chmod +x src/upgrade_sources_conf_default.tcl])
 
 AC_OUTPUT

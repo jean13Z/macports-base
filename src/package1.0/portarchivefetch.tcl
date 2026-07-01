@@ -104,7 +104,7 @@ proc portarchivefetch::filter_sites {} {
     }
 
     # check if porturl itself points to an archive
-    if {[file rootname [file tail $porturl]] == [file rootname [get_portimage_name]] && [file extension $porturl] != ""} {
+    if {[file rootname [file tail $porturl]] eq [file rootname [get_portimage_name]] && [file extension $porturl] ne ""} {
         lappend ret [string range $porturl 0 end-[string length [file tail $porturl]]]:[string range [file extension $porturl] 1 end]
         archive.subdir
     }
@@ -137,7 +137,9 @@ proc portarchivefetch::checkarchivefiles {urls} {
 # returns full path to mirror list file
 proc portarchivefetch::get_full_archive_sites_path {} {
     global archive_sites.listfile archive_sites.listpath porturl
-    return [getportresourcepath $porturl [file join ${archive_sites.listpath} ${archive_sites.listfile}]]
+    # look up archive sites only from this ports tree,
+    # do not fallback to the default
+    return [getportresourcepath $porturl [file join ${archive_sites.listpath} ${archive_sites.listfile}] no]
 }
 
 # Perform the full checksites/checkarchivefiles sequence.
@@ -186,15 +188,19 @@ proc portarchivefetch::fetchfiles {args} {
     if {${archivefetch.ignore_sslcert} != "no"} {
         lappend fetch_options "--ignore-ssl-cert"
     }
-    if {$portverbose == "yes"} {
-        lappend fetch_options "-v"
+    if {$portverbose eq "yes"} {
+        lappend fetch_options "--progress"
+        lappend fetch_options "builtin"
+    } elseif {[llength [info commands ui_progress_download]] > 0} {
+        lappend fetch_options "--progress"
+        lappend fetch_options "ui_progress_download"
     }
     set sorted no
 
     set existing_archive [find_portarchive_path]
 
     foreach {url_var archive} $archivefetch_urls {
-        if {![file isfile ${archivefetch.fulldestpath}/${archive}] && $existing_archive == ""} {
+        if {![file isfile ${archivefetch.fulldestpath}/${archive}] && $existing_archive eq ""} {
             ui_info "$UI_PREFIX [format [msgcat::mc "%s doesn't seem to exist in %s"] $archive ${archivefetch.fulldestpath}]"
             if {![file writable ${archivefetch.fulldestpath}]} {
                 return -code error [format [msgcat::mc "%s must be writable"] ${archivefetch.fulldestpath}]
@@ -203,7 +209,7 @@ proc portarchivefetch::fetchfiles {args} {
                 return -code error [format [msgcat::mc "%s must be writable"] $incoming_path]
             }
             if {!$sorted} {
-                portfetch::sortsites archivefetch_urls {} archive_sites
+                portfetch::sortsites archivefetch_urls archive_sites
                 set sorted yes
             }
             if {![info exists urlmap($url_var)]} {
@@ -212,8 +218,9 @@ proc portarchivefetch::fetchfiles {args} {
             }
             set failed_sites 0
             unset -nocomplain fetched
+            set lastError ""
             foreach site $urlmap($url_var) {
-                if {[string index $site end] != "/"} {
+                if {[string index $site end] ne "/"} {
                     append site "/[option archive.subdir]"
                 } else {
                     append site [option archive.subdir]
@@ -221,12 +228,21 @@ proc portarchivefetch::fetchfiles {args} {
                 ui_msg "$UI_PREFIX [format [msgcat::mc "Attempting to fetch %s from %s"] $archive ${site}]"
                 set file_url [portfetch::assemble_url $site $archive]
                 set effectiveURL ""
-                if {![catch {eval curl fetch --effective-url effectiveURL $fetch_options {$file_url} {"${incoming_path}/${archive}.TMP"}} result]} {
-                    # Successful fetch
+                try {
+                    curl fetch --effective-url effectiveURL {*}$fetch_options $file_url "${incoming_path}/${archive}.TMP"
                     set fetched 1
                     break
-                } else {
-                    ui_debug "[msgcat::mc "Fetching archive failed:"]: $result"
+                } catch {{POSIX SIG SIGINT} eCode eMessage} {
+                    ui_debug [msgcat::mc "Aborted fetching archive due to SIGINT"]
+                    file delete -force "${incoming_path}/${archive}.TMP"
+                    throw
+                } catch {{POSIX SIG SIGTERM} eCode eMessage} {
+                    ui_debug [msgcat::mc "Aborted fetching archive due to SIGTERM"]
+                    file delete -force "${incoming_path}/${archive}.TMP"
+                    throw
+                } catch {{*} eCode eMessage} {
+                    ui_debug [msgcat::mc "Fetching archive failed: %s" $eMessage]
+                    set lastError $eMessage
                     file delete -force "${incoming_path}/${archive}.TMP"
                     incr failed_sites
                     if {$failed_sites > 2 && ![tbool ports_binary_only] && ![_archive_available]} {
@@ -239,7 +255,7 @@ proc portarchivefetch::fetchfiles {args} {
                 set signature "${incoming_path}/${archive}.rmd160"
                 ui_msg "$UI_PREFIX [format [msgcat::mc "Attempting to fetch %s from %s"] ${archive}.rmd160 $site]"
                 # reusing $file_url from the last iteration of the loop above
-                if {[catch {eval curl fetch --effective-url effectiveURL $fetch_options {${file_url}.rmd160} {$signature}} result]} {
+                if {[catch {curl fetch --effective-url effectiveURL {*}$fetch_options ${file_url}.rmd160 $signature} result]} {
                     ui_debug "$::errorInfo"
                     return -code error "Failed to fetch signature for archive: $result"
                 }
@@ -280,8 +296,12 @@ proc portarchivefetch::fetchfiles {args} {
         }
         return 0
     }
-    if {[info exists ports_binary_only] && $ports_binary_only == "yes"} {
-        return -code error "archivefetch failed for [option subport] @[option version]_[option revision][option portvariants]"
+    if {([info exists ports_binary_only] && $ports_binary_only eq "yes") || [_archive_available]} {
+        if {[info exists lastError] && $lastError ne ""} {
+            error [msgcat::mc "version @[option version]_[option revision][option portvariants]: %s" $lastError]
+        } else {
+            error "version @[option version]_[option revision][option portvariants]"
+        }
     } else {
         return 0
     }
@@ -302,6 +322,8 @@ proc portarchivefetch::archivefetch_start {args} {
     }
     if {[info exists all_archive_files] && [llength $all_archive_files] > 0} {
         ui_msg "$UI_PREFIX [format [msgcat::mc "Fetching archive for %s"] $subport]"
+    } elseif {[tbool ports_binary_only]} {
+        error "Binary-only mode requested with no usable archive sites configured"
     }
     portfetch::check_dns
 }

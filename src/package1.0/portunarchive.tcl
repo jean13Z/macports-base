@@ -71,14 +71,14 @@ proc portunarchive::unarchive_init {args} {
     set skipped 0
     if {[check_statefile target org.macports.unarchive $target_state_fd]} {
         return 0
-    } elseif {[info exists ports_source_only] && $ports_source_only == "yes"} {
+    } elseif {[info exists ports_source_only] && $ports_source_only eq "yes"} {
         ui_debug "Skipping unarchive ($subport) since source-only is set"
         set skipped 1
     } elseif {[check_statefile target org.macports.destroot $target_state_fd]
               && [file isdirectory $destroot]} {
         ui_debug "Skipping unarchive ($subport) since destroot completed"
         set skipped 1
-    } elseif {[info exists ports_force] && $ports_force == "yes"} {
+    } elseif {[info exists ports_force] && $ports_force eq "yes"} {
         ui_debug "Skipping unarchive ($subport) since force is set"
         set skipped 1
     } else {
@@ -88,7 +88,7 @@ proc portunarchive::unarchive_init {args} {
         if {${unarchive.path} != ""} {
             ui_debug "Found [string toupper ${unarchive.type}] archive: ${unarchive.path}"
         } else {
-            if {[info exists ports_binary_only] && $ports_binary_only == "yes"} {
+            if {[info exists ports_binary_only] && $ports_binary_only eq "yes"} {
                 return -code error "Archive for ${subport} ${version}_${revision}${portvariants} not found, required when binary-only is set!"
             } else {
                 ui_debug "Skipping unarchive ($subport) since no suitable archive found"
@@ -173,7 +173,13 @@ proc portunarchive::unarchive_command_setup {args} {
                 if {[regexp {z2?$} ${unarchive.type}]} {
                     set unarchive.args {-}
                     if {[regexp {bz2?$} ${unarchive.type}]} {
-                        set gzip "bzip2"
+                        if {![catch {binaryInPath lbzip2}]} {
+                            set gzip "lbzip2"
+                        } elseif {![catch {binaryInPath pbzip2}]} {
+                            set gzip "pbzip2"
+                        } else {
+                            set gzip "bzip2"
+                        }
                     } elseif {[regexp {lz$} ${unarchive.type}]} {
                         set gzip "lzma"
                     } elseif {[regexp {xz$} ${unarchive.type}]} {

@@ -40,6 +40,8 @@ package require registry_util 2.0
 package require macports 1.0
 package require Pextlib 1.0
 
+package require Tclx
+
 set UI_PREFIX "--> "
 
 # Port Images are installations of the destroot of a port into a compressed
@@ -66,7 +68,7 @@ variable noexec 0
 
 # takes a composite version spec rather than separate version,revision,variants
 proc activate_composite {name {v ""} {optionslist ""}} {
-    if {$v == ""} {
+    if {$v eq ""} {
         return [activate $name "" "" 0 $optionslist]
     } elseif {[registry::decode_spec $v version revision variants]} {
         return [activate $name $version $revision $variants $optionslist]
@@ -107,19 +109,19 @@ proc activate {name {version ""} {revision ""} {variants 0} {optionslist ""}} {
         # if another version of this port is active, deactivate it first
         set current [registry::entry installed $name]
         foreach i $current {
-            if { ![string equal $specifier "[$i version]_[$i revision][$i variants]"] } {
+            if { $specifier ne "[$i version]_[$i revision][$i variants]" } {
                 lappend todeactivate $i
             }
         }
 
         # this shouldn't be possible
-        if { ![string equal [$requested installtype] "image"] } {
+        if { [$requested installtype] ne "image" } {
             return -code error "Image error: ${name} @${specifier} not installed as an image."
         }
         if {![::file isfile $location]} {
             return -code error "Image error: Can't find image file $location"
         }
-        if { [string equal [$requested state] "installed"] } {
+        if {[$requested state] eq "installed"} {
             return -code error "Image error: ${name} @${specifier} is already active."
         }
     }
@@ -132,12 +134,11 @@ proc activate {name {version ""} {revision ""} {variants 0} {optionslist ""}} {
     ui_msg "$UI_PREFIX [format [msgcat::mc "Activating %s @%s"] $name $specifier]"
 
     _activate_contents $requested
-    $requested state installed
 }
 
 # takes a composite version spec rather than separate version,revision,variants
 proc deactivate_composite {name {v ""} {optionslist ""}} {
-    if {$v == ""} {
+    if {$v eq ""} {
         return [deactivate $name "" "" 0 $optionslist]
     } elseif {[registry::decode_spec $v version revision variants]} {
         return [deactivate $name $version $revision $variants $optionslist]
@@ -162,7 +163,7 @@ proc deactivate {name {version ""} {revision ""} {variants 0} {optionslist ""}} 
         set registry_open yes
     }
 
-    if { [string equal $name ""] } {
+    if {$name eq ""} {
         throw registry::image-error "Registry error: Please specify the name of the port."
     }
     set ilist [registry::entry installed $name]
@@ -175,31 +176,33 @@ proc deactivate {name {version ""} {revision ""} {variants 0} {optionslist ""}} 
     set name [$requested name]
     set specifier "[$requested version]_[$requested revision][$requested variants]"
 
-    if {$version != "" && ($version != [$requested version] ||
-        ($revision != "" && ($revision != [$requested revision] || $variants != [$requested variants])))} {
+    if {$version ne "" && ($version != [$requested version] ||
+        ($revision ne "" && ($revision != [$requested revision] || $variants != [$requested variants])))} {
         set v $version
-        if {$revision != ""} {
+        if {$revision ne ""} {
             append v _${revision}${variants}
         }
         return -code error "Active version of $name is not $v but ${specifier}."
     }
 
-    ui_msg "$UI_PREFIX [format [msgcat::mc "Deactivating %s @%s"] $name $specifier]"
-
-    if { ![string equal [$requested installtype] "image"] } {
+    if { [$requested installtype] ne "image" } {
         return -code error "Image error: ${name} @${specifier} not installed as an image."
     }
     # this shouldn't be possible
-    if { [$requested state] != "installed" } {
+    if { [$requested state] ne "installed" } {
         return -code error "Image error: ${name} @${specifier} is not active."
     }
-
+	
     if {![info exists options(ports_nodepcheck)] || ![string is true -strict $options(ports_nodepcheck)]} {
-        registry::check_dependents $requested $force "deactivate"
+        set retvalue [registry::check_dependents $requested $force "deactivate"]
+        if {$retvalue eq "quit"} {
+            return
+        }
     }
 
+    ui_msg "$UI_PREFIX [format [msgcat::mc "Deactivating %s @%s"] $name $specifier]"
+	
     _deactivate_contents $requested [$requested files] $force
-    $requested state imaged
 }
 
 proc _check_registry {name version revision variants} {
@@ -207,36 +210,55 @@ proc _check_registry {name version revision variants} {
 
     set searchkeys $name
     set composite_spec ""
-    if {$version != ""} {
+    if {$version ne ""} {
         lappend searchkeys $version
         set composite_spec $version
         # restriction imposed by underlying registry API (see entry.c):
         # if a revision is specified, so must variants be
-        if {$revision != ""} {
+        if {$revision ne ""} {
             lappend searchkeys $revision $variants
             append composite_spec _${revision}${variants}
         }
     }
-    set ilist [eval registry::entry imaged $searchkeys]
+    set ilist [registry::entry imaged {*}$searchkeys]
 
     if { [llength $ilist] > 1 } {
-        ui_msg "$UI_PREFIX [msgcat::mc "The following versions of $name are currently installed:"]"
+        set portilist {}
+        set msg "The following versions of $name are currently installed:"
+        if {[macports::ui_isset ports_noninteractive]} {
+            ui_msg "$UI_PREFIX [msgcat::mc $msg]"
+        }
         foreach i $ilist {
             set iname [$i name]
             set iversion [$i version]
             set irevision [$i revision]
             set ivariants [$i variants]
-            if { [$i state] == "installed" } {
-                ui_msg "$UI_PREFIX [format [msgcat::mc "    %s @%s_%s%s (active)"] $iname $iversion $irevision $ivariants]"
+            ##
+            # User Interaction Question
+            # Asking choice to select option in case of ambiguous activate
+            if {[info exists macports::ui_options(questions_singlechoice)]} {
+                if { [$i state] eq "installed" } {
+                    lappend portilist $iname@${iversion}_${irevision}${ivariants}(active)
+                } else {
+                    lappend portilist $iname@${iversion}_${irevision}${ivariants}
+                }
             } else {
-                ui_msg "$UI_PREFIX [format [msgcat::mc "    %s @%s_%s%s"] $iname $iversion $irevision $ivariants]"
+                if { [$i state] eq "installed" } {
+                    ui_msg "$UI_PREFIX [format [msgcat::mc "    %s @%s_%s%s (active)"] $iname $iversion $irevision $ivariants]"
+                } else {
+                    ui_msg "$UI_PREFIX [format [msgcat::mc "    %s @%s_%s%s"] $iname $iversion $irevision $ivariants]"
+                }
             }
+        }
+        if {[info exists macports::ui_options(questions_singlechoice)]} {
+            set retvalue [$macports::ui_options(questions_singlechoice) $msg "Choice_Q1" $portilist]
+            return [lindex $ilist $retvalue]
         }
         throw registry::invalid "Registry error: Please specify the full version as recorded in the port registry."
     } elseif { [llength $ilist] == 1 } {
         return [lindex $ilist 0]
     }
-    if {$composite_spec != ""} {
+    if {$composite_spec ne ""} {
         set composite_spec " @${composite_spec}"
     }
     throw registry::invalid "Registry error: ${name}${composite_spec} is not installed."
@@ -268,10 +290,10 @@ proc _activate_file {srcfile dstfile} {
                 ::file mkdir $dstfile
                 # fix attributes on the directory.
                 if {[getuid] == 0} {
-                    eval ::file attributes {$dstfile} [::file attributes $srcfile]
+                    ::file attributes $dstfile {*}[::file attributes $srcfile]
                 } else {
                     # not root, so can't set owner/group
-                    eval ::file attributes {$dstfile} -permissions [::file attributes $srcfile -permissions]
+                    ::file attributes $dstfile -permissions {*}[::file attributes $srcfile -permissions]
                 }
                 # set mtime on installed element
                 ::file mtime $dstfile [::file mtime $srcfile]
@@ -344,7 +366,13 @@ proc extract_archive_to_tmpdir {location} {
                     if {[regexp {z2?$} ${unarchive.type}]} {
                         set unarchive.args {-}
                         if {[regexp {bz2?$} ${unarchive.type}]} {
-                            set gzip "bzip2"
+                            if {![catch {macports::binaryInPath lbzip2}]} {
+                                set gzip "lbzip2"
+                            } elseif {![catch {macports::binaryInPath pbzip2}]} {
+                                set gzip "pbzip2"
+                            } else {
+                                set gzip "bzip2"
+                            }
                         } elseif {[regexp {lz$} ${unarchive.type}]} {
                             set gzip "lzma"
                         } elseif {[regexp {xz$} ${unarchive.type}]} {
@@ -469,7 +497,7 @@ proc _activate_contents {port {imagefiles {}} {location {}}} {
                     }
                 }
 
-                if {$owner != "replaced"} {
+                if {$owner ne "replaced"} {
                     if { [string is true -strict $force] } {
                         # if we're forcing the activation, then we move any existing
                         # files to a backup file, both in the filesystem and in the
@@ -505,7 +533,7 @@ proc _activate_contents {port {imagefiles {}} {location {}}} {
                 # we'll set the directory attributes properly for all
                 # directories.
                 set directory [::file dirname $file]
-                while { [lsearch -exact $files $directory] == -1 } {
+                while {$directory ni $files} {
                     lappend files $directory
                     set directory [::file dirname $directory]
                 }
@@ -539,6 +567,24 @@ proc _activate_contents {port {imagefiles {}} {location {}}} {
                         lappend rollback_filelist $file
                     }
                 }
+
+                # Recording that the port has been activated should be done
+                # here so that this information cannot be inconsistent with the
+                # state of the files on disk.
+                $port state installed
+            } catch {{POSIX SIG SIGINT} eCode eMessage} {
+                # Pressing ^C will (often?) print "^C" to the terminal; send
+                # a linebreak so our message appears after that.
+                ui_msg ""
+                ui_msg "Control-C pressed, rolling back, please wait."
+                # can't do it here since we're already inside a transaction
+                set deactivate_this yes
+                throw
+            } catch {{POSIX SIG SIGTERM} eCode eMessage} {
+                ui_msg "SIGTERM received, rolling back, please wait."
+                # can't do it here since we're already inside a transaction
+                set deactivate_this yes
+                throw
             } catch {*} {
                 ui_debug "Activation failed, rolling back."
                 # can't do it here since we're already inside a transaction
@@ -547,22 +593,41 @@ proc _activate_contents {port {imagefiles {}} {location {}}} {
             }
         }
     } catch {*} {
-        # roll back activation of this port
-        if {[info exists deactivate_this]} {
-            _deactivate_contents $port $rollback_filelist yes yes
-        }
-        # if any errors occurred, move backed-up files back to their original
-        # locations, then rethrow the error. Transaction rollback will take care
-        # of this in the registry.
-        foreach file $backups {
-            ::file rename -force -- "${file}${baksuffix}" $file
-        }
-        # reactivate deactivated ports
-        foreach entry [array names todeactivate] {
-            if {[$entry state] == "imaged" && ($noexec || ![registry::run_target $entry activate ""])} {
-                activate [$entry name] [$entry version] [$entry revision] [$entry variants] [list ports_activate_no-exec $noexec]
+        # This code must run to completion, or the installation might be left
+        # in an inconsistent state. We store the old signal handling state,
+        # block the critical signals and restore to the previous state instead
+        # of unblocking.
+        # Note that this still contains a race condition: A user could press ^C
+        # fast enough so that the second error arrives before the error is
+        # caught, re-thrown and re-caught here. As far as I can see, there's no
+        # easy way around this problem.
+        set osignals [signal get {TERM INT}]
+        try {
+            # Block signals to avoid inconsistiencies.
+            signal block {TERM INT}
+
+            # roll back activation of this port
+            if {[info exists deactivate_this]} {
+                _deactivate_contents $port $rollback_filelist yes yes
             }
+            # if any errors occurred, move backed-up files back to their original
+            # locations, then rethrow the error. Transaction rollback will take care
+            # of this in the registry.
+            foreach file $backups {
+                ::file rename -force -- "${file}${baksuffix}" $file
+            }
+            # reactivate deactivated ports
+            foreach entry [array names todeactivate] {
+                if {[$entry state] eq "imaged" && ($noexec || ![registry::run_target $entry activate ""])} {
+                    activate [$entry name] [$entry version] [$entry revision] [$entry variants] [list ports_activate_no-exec $noexec]
+                }
+            }
+        } finally {
+            # We've completed all critical operations, re-enable the TERM and
+            # INT signals.
+            signal set $osignals
         }
+
         # remove temp image dir
         ::file delete -force $extracted_dir
         throw
@@ -580,10 +645,10 @@ proc _deactivate_file {dstfile} {
         ui_debug "$dstfile does not exist"
         return
     }
-    if { $filetype == "link" } {
+    if { $filetype eq "link" } {
         ui_debug "deactivating link: $dstfile"
         file delete -- $dstfile
-    } elseif { $filetype == "directory" } {
+    } elseif { $filetype eq "directory" } {
         # 0 item means empty.
         if { [llength [readdir $dstfile]] == 0 } {
             variable precious_dirs
@@ -606,7 +671,7 @@ proc _deactivate_contents {port imagefiles {force 0} {rollback 0}} {
     set files [list]
 
     foreach file $imagefiles {
-        if { [::file exists $file] || (![catch {::file type $file}] && [::file type $file] == "link") } {
+        if { [::file exists $file] || (![catch {::file type $file}] && [::file type $file] eq "link") } {
             # Normalize the file path to avoid removing the intermediate
             # symlinks (remove the empty directories instead)
             # Remark: paths in the registry may be not normalized.
@@ -622,7 +687,7 @@ proc _deactivate_contents {port imagefiles {force 0} {rollback 0}} {
 
             # Split out the filename's subpaths and add them to the image list
             # as well.
-            while { [lsearch -exact $files $directory] == -1 } {
+            while {$directory ni $files} {
                 lappend files $directory
                 set directory [::file dirname $directory]
             }
@@ -636,18 +701,38 @@ proc _deactivate_contents {port imagefiles {force 0} {rollback 0}} {
     # are after their elements.
     set files [lsort -decreasing -unique $files]
 
-    # Remove all elements.
-    if {!$rollback} {
-        registry::write {
-            $port deactivate $imagefiles
+    # Avoid interruptions while removing the files and updating the database to
+    # prevent inconsistencies from forming between filesystem and database.
+    set osignals [signal get {TERM INT}]
+
+    try {
+        # Block the TERM and INT signals to avoid being interrupted. Note that
+        # they might already be block at this point because
+        # _deactivate_contents might be called during rollback of
+        # _activate_contents, but because we're storing the old signal state
+        # and returning to that instead of unblocking it doesn't matter.
+        signal block {TERM INT}
+
+        # Remove all elements.
+        if {!$rollback} {
+            registry::write {
+                $port deactivate $imagefiles
+                foreach file $files {
+                    _deactivate_file $file
+                }
+
+                # Update the port's state in the same transaction as the file
+                # delete operations.
+                $port state imaged
+            }
+        } else {
             foreach file $files {
                 _deactivate_file $file
             }
         }
-    } else {
-        foreach file $files {
-            _deactivate_file $file
-        }
+    } finally {
+        # restore the signal block state
+        signal set $osignals
     }
 }
 
